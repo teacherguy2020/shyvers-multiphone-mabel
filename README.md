@@ -263,7 +263,7 @@ currently used by the iPad voice and text handsets and enables the bounded
 music actions described above. The next design step is a Mac-side VIP action
 registry so Mabel can eventually coordinate named automations such as:
 
-- lighting scenes for Clem's Place or the listening room;
+- lighting scenes;
 - Harmony Hub activities;
 - audio/display ambience;
 - future room-specific devices and cleanup actions.
@@ -282,9 +282,3 @@ active session. VIP start remains LAN-only and must not be port-forwarded.
   and electrical inspection.
 - Hardware assumptions remain hypotheses until the machine is examined.
 
-## Source note
-
-The initial wiki synthesis is based on Brian's Apple Notes entry **“Shyvers
-Multiphone Project”** in the `Jarvis` folder, captured September 2026. Historical
-claims should be verified against patents, photographs, service documentation,
-and the arriving machine.
