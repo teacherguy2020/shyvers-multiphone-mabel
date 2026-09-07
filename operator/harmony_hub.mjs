@@ -5,7 +5,7 @@
  * The module keeps one connection open, probes it with WebSocket ping/pong,
  * reconnects after close/staleness, and retries failed requests on a fresh
  * connection. It intentionally knows nothing about a particular receiver or
- * room; device/activity names come from config/harmony-mapping.json.
+ * room; device/activity names come from the user's generated local mapping.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -54,10 +54,10 @@ function delay(ms) {
 
 export class HarmonyHubClient {
   constructor({
-    host = process.env.HARMONY_HOST || '10.0.0.21',
+    host = process.env.HARMONY_HOST || '',
     port = Number(process.env.HARMONY_PORT || 8088),
     domain = process.env.HARMONY_DOMAIN || 'svcs.myharmony.com',
-    hubId = process.env.HARMONY_HUB_ID || '3871019',
+    hubId = process.env.HARMONY_HUB_ID || '',
     connectTimeoutMs = 10000,
     requestTimeoutMs = 30000,
     heartbeatMs = 50000,
@@ -68,7 +68,9 @@ export class HarmonyHubClient {
     this.port = port;
     this.domain = domain;
     this.hubId = String(hubId);
-    this.url = `ws://${host}:${port}/?domain=${domain}&hubId=${this.hubId}`;
+    this.url = host && this.hubId
+      ? `ws://${host}:${port}/?domain=${domain}&hubId=${this.hubId}`
+      : null;
     this.connectTimeoutMs = connectTimeoutMs;
     this.requestTimeoutMs = requestTimeoutMs;
     this.heartbeatMs = heartbeatMs;
@@ -89,6 +91,9 @@ export class HarmonyHubClient {
   }
 
   async connect() {
+    if (!this.host || !this.hubId) {
+      throw new Error('Harmony configuration missing: set HARMONY_HOST and HARMONY_HUB_ID');
+    }
     this.closed = false;
     if (this.isOpen()) return this;
     if (this.connecting) return this.connecting;

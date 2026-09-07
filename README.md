@@ -37,25 +37,22 @@ an iPad on the same local network. The Seeburg wiki remains at
 
 ## Harmony Hub control
 
-`operator/harmony_hub.mjs` is a generic local WebSocket client for the Harmony
-Hub at `10.0.0.21`. It keeps a persistent connection, detects stale sockets with
+`operator/harmony_hub.mjs` is a generic local WebSocket client for a user's
+Harmony Hub. It keeps a persistent connection, detects stale sockets with
 ping/pong, reconnects after disconnects, and retries failed requests. It does
-not assume a Denon receiver; device and activity names come from the generated
-mapping files:
-
-- [`config/harmony-mapping.md`](config/harmony-mapping.md) — human-readable names, IDs, and exact command strings;
-- [`config/harmony-mapping.json`](config/harmony-mapping.json) — machine-readable mapping for other agents/tools.
+not assume a Denon receiver or ship a shared hub mapping. Generate your own
+local mapping using [`config/README.md`](config/README.md).
 
 Examples:
 
 ```sh
 # Send a discrete press by numeric ID and exact Harmony command.
 node operator/harmony_hub.mjs command \
-  --device-id 33760171 --command InputPhono --status press
+  --device-id YOUR_DEVICE_ID --command InputPhono --status press
 
 # Send a release when implementing a press/release hold sequence.
 node operator/harmony_hub.mjs command \
-  --device-id 33760171 --command InputPhono --status release
+  --device-id YOUR_DEVICE_ID --command InputPhono --status release
 
 # Resolve names through the persistent mapping.
 node operator/harmony_hub.mjs command-by-name \
@@ -75,8 +72,8 @@ node operator/harmony_config.mjs --input "/path/to/Harmony config.md"
 The runtime exports `harmony_command(device_id, command, status)`,
 `harmony_press_many(device_id, command, count)`,
 `harmony_start_activity(activity_id)`, `harmony_get_config()`, and name-based
-variants for use by other local Node tools. The permanent WebSocket URL is
-`ws://10.0.0.21:8088/?domain=svcs.myharmony.com&hubId=3871019`.
+variants for use by other local Node tools. The WebSocket host, port, domain,
+and hub ID must come from the user's own Harmony configuration.
 
 Terminal Mabel uses `harmony_press_many()` to lower the Denon by 40
 `VolumeDown` presses rapidly during a call and restores the successfully sent presses
@@ -281,4 +278,3 @@ active session. VIP start remains LAN-only and must not be port-forwarded.
 - No antique hardware should be connected to mains power before documentation
   and electrical inspection.
 - Hardware assumptions remain hypotheses until the machine is examined.
-

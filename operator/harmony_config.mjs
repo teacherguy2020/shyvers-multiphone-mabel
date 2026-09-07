@@ -15,10 +15,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultJsonPath = path.join(root, 'config', 'harmony-mapping.json');
 const defaultMarkdownPath = path.join(root, 'config', 'harmony-mapping.md');
 const DEFAULT_HUB = {
-  id: '3871019',
-  host: '10.0.0.21',
-  port: 8088,
-  domain: 'svcs.myharmony.com',
+  id: process.env.HARMONY_HUB_ID || '',
+  host: process.env.HARMONY_HOST || '',
+  port: Number(process.env.HARMONY_PORT || 8088),
+  domain: process.env.HARMONY_DOMAIN || 'svcs.myharmony.com',
 };
 
 function argMap(argv) {

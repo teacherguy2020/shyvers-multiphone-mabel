@@ -8,3 +8,7 @@ state/mabel-song-facts.json
 
 # Pico device-only credentials.
 micropicoMultiphone/secrets.py
+
+# Installation-specific Harmony exports and generated mappings.
+config/harmony-mapping.json
+config/harmony-mapping.md

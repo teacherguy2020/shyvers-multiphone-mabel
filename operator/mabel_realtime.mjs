@@ -48,6 +48,7 @@ const duckInterPressValue = args.get('duck-inter-press-ms');
 const duckInterPressMs = Math.max(0, Number(duckInterPressValue === undefined ? 0 : duckInterPressValue));
 const restoreInterPressValue = args.get('restore-inter-press-ms');
 const restoreInterPressMs = Math.max(0, Number(restoreInterPressValue === undefined ? 5 : restoreInterPressValue));
+const harmonyVolumeDeviceId = process.env.HARMONY_VOLUME_DEVICE_ID || '';
 const soundsDir = args.get('sounds-dir') || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../sounds');
 const soundFiles = {
   ringback: 'phone-ringback-answer-click.m4a',
@@ -112,14 +113,16 @@ const secondsSinceLastCall = Number.isFinite(Number(session.secondsSinceLastCall
 const recentCaller = secondsSinceLastCall !== null && secondsSinceLastCall <= 300;
 let duckPromise = Promise.resolve({ sent: 0 });
 let duckRestored = false;
-if (duckSteps > 0) {
-  duckPromise = harmony_press_many('33760171', 'VolumeDown', duckSteps, {
+if (duckSteps > 0 && harmonyVolumeDeviceId) {
+  duckPromise = harmony_press_many(harmonyVolumeDeviceId, 'VolumeDown', duckSteps, {
     client: harmonyClient,
     interPressMs: duckInterPressMs,
   }).catch((error) => {
     console.warn(`Mabel volume ducking unavailable: ${error.message}`);
     return { sent: Number(error.sent) || 0 };
   });
+} else if (duckSteps > 0) {
+  console.warn('Mabel volume ducking unavailable: set HARMONY_VOLUME_DEVICE_ID');
 }
 const ws = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
   headers: { Authorization: `Bearer ${apiKey}` },
@@ -850,7 +853,7 @@ async function restoreMusicVolume(delayMs = 0) {
     if (duckRestored || duckResult.sent <= 0) return;
     duckRestored = true;
     try {
-      await harmony_press_many('33760171', 'VolumeUp', duckResult.sent, {
+      await harmony_press_many(harmonyVolumeDeviceId, 'VolumeUp', duckResult.sent, {
         client: harmonyClient,
         interPressMs: restoreInterPressMs,
       });
