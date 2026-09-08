@@ -451,7 +451,7 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--bridge-url", default="http://127.0.0.1:8788")
-    parser.add_argument("--cert-ip", default="10.0.0.210", help="LAN IP included in the self-signed certificate")
+    parser.add_argument("--cert-ip", default="127.0.0.1", help="LAN IP included in the self-signed certificate; override for remote handset access")
     parser.add_argument("--cert", default=str(project_dir / "state" / "mabel-handset-cert.pem"))
     parser.add_argument("--key", default=str(project_dir / "state" / "mabel-handset-key.pem"))
     parser.add_argument("--model", default="gpt-realtime")

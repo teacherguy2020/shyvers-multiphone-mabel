@@ -297,7 +297,7 @@ or connecting a caller.
 `operator/mabel_web.py` serves the HTTPS browser handset at:
 
 ```text
-https://10.0.0.210:8790/
+https://<Mac-LAN-IP>:8790/
 ```
 
 The page provides three controls:

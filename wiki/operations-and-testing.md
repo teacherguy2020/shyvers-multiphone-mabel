@@ -90,8 +90,9 @@ than part of the Mabel service.
 
 ## Now Playing deployment
 
-The Now Playing API is deployed on the Pi at `10.0.0.4` on port `3101`; it
-controls the configured MPD/moOde host. Changes to the Now Playing routes require
+The Now Playing API is deployed at the installation's configured host on port
+`3101`; it controls the configured MPD/moOde host. Set the API address for your
+installation before running the operator. Changes to the Now Playing routes require
 restarting the managed `now-playing.service` and verifying that exactly one
 current process owns port 3101.
 

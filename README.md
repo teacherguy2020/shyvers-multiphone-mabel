@@ -124,8 +124,8 @@ available as a fallback for existing protected local setups. Do not place the
 key in this project, shell history, or command examples.
 
 Omit `--number` for an interactive loop. Omit `--dry-run` only when ready to
-actually queue a selection. The prototype defaults to the deployed API at
-`10.0.0.4:3101`; override it with `NOW_PLAYING_MULTIPHONE_URL` when needed.
+actually queue a selection. Set `NOW_PLAYING_MULTIPHONE_URL` to the API address
+used by your installation.
 
 ## Mabel local bridge
 
@@ -194,7 +194,7 @@ python3 operator/mabel_service.py --voice nova
 python3 operator/mabel_web.py
 ```
 
-On the iPad, open `https://10.0.0.210:8790/`, accept the local certificate
+On the iPad, open `https://<Mac-LAN-IP>:8790/`, accept the local certificate
 warning, and pair the Bose speaker and microphone to the iPad. **Call Mabel**
 starts directly in VIP/off-script mode. **Call Normal Mabel** starts the regular
 Multiphone numbered-selection flow for testing the 170-position playlist.

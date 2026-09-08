@@ -8,5 +8,6 @@ Copy `secrets.example.py` to `secrets.py` on the Pico and fill in
 excluded from this repository. Keep it on the device only and never commit
 credentials.
 
-The status page is served on port 80. The Mabel endpoint is configured in
-`main.py` as the private LAN address used by the Multiphone installation.
+The status page is served on port 80. Set the installation-specific Mabel
+endpoint in `secrets.py` as `MABEL_URL`; do not hard-code a LAN address in the
+tracked source.

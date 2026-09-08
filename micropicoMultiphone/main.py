@@ -14,7 +14,6 @@ ACTIVE_LOW = True
 ACTIVE_DEBOUNCE_MS = 100
 REARM_MS = 500
 POLL_MS = 10
-MABEL_URL = "http://10.0.0.210:8788/shyvers/start-normal"
 HTTP_PORT = 80
 
 boot_ms = time.ticks_ms()
@@ -34,9 +33,12 @@ def get_secret(*names):
 
 SSID = get_secret("SSID", "WIFI_SSID", "ssid", "wifi_ssid")
 PASSWORD = get_secret("PASSWORD", "WIFI_PASSWORD", "password", "wifi_password")
+MABEL_URL = get_secret("MABEL_URL", "MABEL_ENDPOINT", "mabel_url", "mabel_endpoint")
 
 if not SSID or PASSWORD is None:
     raise RuntimeError("secrets.py must define WIFI_SSID/WIFI_PASSWORD")
+if not MABEL_URL:
+    raise RuntimeError("secrets.py must define MABEL_URL")
 
 
 def connect_wifi():

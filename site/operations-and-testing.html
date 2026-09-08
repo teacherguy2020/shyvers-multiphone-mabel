@@ -96,8 +96,9 @@ sounds/
 <p>a band-limited telephone sound, but the EQ is an external audio choice rather</p>
 <p>than part of the Mabel service.</p>
 <h2>Now Playing deployment</h2>
-<p>The Now Playing API is deployed on the Pi at <code>10.0.0.4</code> on port <code>3101</code>; it</p>
-<p>controls the configured MPD/moOde host. Changes to the Now Playing routes require</p>
+<p>The Now Playing API is deployed at the installation's configured host on port</p>
+<p><code>3101</code>; it controls the configured MPD/moOde host. Set the API address for your</p>
+<p>installation before running the operator. Changes to the Now Playing routes require</p>
 <p>restarting the managed <code>now-playing.service</code> and verifying that exactly one</p>
 <p>current process owns port 3101.</p>
 <p>An orphaned old process once held the port while systemd repeatedly restarted the</p>

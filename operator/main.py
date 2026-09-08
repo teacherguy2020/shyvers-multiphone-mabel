@@ -76,7 +76,7 @@ def main():
         setup_keychain()
         print("Now Playing track key saved in macOS Keychain.")
         return 0
-    endpoint = os.environ.get("NOW_PLAYING_MULTIPHONE_URL", "http://10.0.0.4:3101/integrations/multiphone/selection")
+    endpoint = os.environ.get("NOW_PLAYING_MULTIPHONE_URL", "http://127.0.0.1:3101/integrations/multiphone/selection")
     track_key = keychain_key() or os.environ.get("NOW_PLAYING_TRACK_KEY", "")
 
     print(f"Mabel keyboard simulator · station: {args.station}")

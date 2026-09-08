@@ -572,7 +572,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run the local Mabel session service")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8788)
-    parser.add_argument("--now-playing-url", default="http://10.0.0.4:3101/integrations/multiphone/selection")
+    parser.add_argument("--now-playing-url", default="http://127.0.0.1:3101/integrations/multiphone/selection")
     parser.add_argument("--voice", default=os.environ.get("MABEL_VOICE", "coral"), help="OpenAI TTS voice (default: coral)")
     parser.add_argument("--speed", type=float, default=1.1, help="OpenAI TTS playback speed (default: 1.1)")
     parser.add_argument("--fallback-voice", default="Samantha", help="macOS say fallback voice")
