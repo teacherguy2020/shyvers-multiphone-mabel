@@ -40,6 +40,13 @@ const confirmationVadSilenceValue = args.get('confirmation-vad-silence-ms');
 const confirmationVadSilenceMs = Math.max(50, Number(
   confirmationVadSilenceValue === undefined ? 250 : confirmationVadSilenceValue,
 ));
+// Open the confirmation turn slightly before afplay's process-close event.
+// The final prompt includes a short waiting beat, so this avoids losing the
+// caller's first word in afplay shutdown latency without adding pre-roll.
+const confirmationListenLeadValue = args.get('confirmation-listen-lead-ms');
+const confirmationListenLeadMs = Math.max(0, Number(
+  confirmationListenLeadValue === undefined ? 100 : confirmationListenLeadValue,
+));
 const voicePlaybackRate = 1.1;
 const confirmationPlaybackRate = 1.2;
 const retrievalAudioTailGraceMs = 750;
@@ -808,7 +815,7 @@ function looksLikeNumberUtterance(text) {
   }
   return /^(?:zero|oh|one|two|three|tree|free|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|a hundred|one hundred)\b/.test(value);
 }
-function playWavNow(pcm, playbackRate = voicePlaybackRate, label = 'mabel') {
+function playWavNow(pcm, playbackRate = voicePlaybackRate, label = 'mabel', onNearEnd = null, nearEndLeadMs = 0) {
   const wav = Buffer.alloc(44 + pcm.length);
   wav.write('RIFF', 0); wav.writeUInt32LE(36 + pcm.length, 4); wav.write('WAVE', 8);
   wav.write('fmt ', 12); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20);
@@ -821,12 +828,14 @@ function playWavNow(pcm, playbackRate = voicePlaybackRate, label = 'mabel') {
       if (error) { resolve(); return; }
       let settled = false;
       let timeout;
+      let nearEndTimer = null;
       const expectedDurationMs = (pcm.length / 48000) * 1000 / playbackRate;
       const startedAt = Date.now();
       const finish = (exitCode = null, signal = null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        if (nearEndTimer) clearTimeout(nearEndTimer);
         const elapsedMs = Date.now() - startedAt;
         if (elapsedMs + 250 < expectedDurationMs || signal || (exitCode !== null && exitCode !== 0)) {
           console.warn(`Mabel audio playback ended early: ${label}; expected ${Math.round(expectedDurationMs)} ms, got ${elapsedMs} ms, exit=${exitCode ?? 'n/a'}, signal=${signal ?? 'none'}, pcm=${pcm.length} bytes`);
@@ -835,6 +844,13 @@ function playWavNow(pcm, playbackRate = voicePlaybackRate, label = 'mabel') {
         resolve();
       };
       const playback = spawn('afplay', ['-r', String(playbackRate), '-q', '1', file], { stdio: 'ignore' });
+      if (onNearEnd) {
+        const nearEndMs = Math.max(0, expectedDurationMs - nearEndLeadMs);
+        nearEndTimer = setTimeout(() => {
+          nearEndTimer = null;
+          onNearEnd();
+        }, nearEndMs);
+      }
       playback.once('error', finish);
       playback.once('close', (exitCode, signal) => finish(exitCode, signal));
       const maxDurationMs = Math.max(3000, Math.ceil((pcm.length / 48000) * 1000) + 3000);
@@ -1146,6 +1162,7 @@ ws.on('message', async (raw) => {
     const confirmationResponse = confirmationNumber !== null && numberAcknowledgmentRequested;
     if (confirmationResponse) {
       const listenAfterConfirmation = () => {
+        if (numberConfirmationListening && !numberAcknowledgmentRequested) return;
         numberAcknowledgmentRequested = false;
         numberConfirmationListening = true;
         assistantSpeaking = false;
@@ -1160,7 +1177,13 @@ ws.on('message', async (raw) => {
           // Even a zero-length tail window can capture Mabel's final digits
           // and feed them back as a phantom caller correction.
           clearEarlyAnswerBuffer();
-          await playWavNow(pcm, confirmationPlaybackRate, 'confirmation');
+          await playWavNow(
+            pcm,
+            confirmationPlaybackRate,
+            'confirmation',
+            listenAfterConfirmation,
+            confirmationListenLeadMs,
+          );
           listenAfterConfirmation();
         });
       } else {
