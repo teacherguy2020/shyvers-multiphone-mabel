@@ -19,6 +19,22 @@ The Multiphone remains the customer interface, the nickel starts the transaction
 Mabel acts as the central music operator, and the existing audio system provides
 the program audio.
 
+## A brief history
+
+The Shyvers Multiphone was designed as a coin-operated telephone music selector.
+Kenneth C. Shyvers' 1941 utility patent, US 2,264,911, describes a customer
+station that accepted payment, connected the caller to a central operator, and
+let the caller request a record from a catalog. The records were kept at a
+central studio, so the Multiphone was a short, paid request call—not a local
+jukebox operated directly by the customer.
+
+Multiple stations could share a request line, while the requested music played
+separately through the establishment's sound system. This project preserves
+that division: the antique Multiphone is the customer interface, Mabel is the
+operator, and Now Playing is the modern equivalent of the operator's queue and
+record library. See the [historical operating model](wiki/historical-operating-model.md)
+for the source-backed details and modern mapping.
+
 ## Wiki
 
 The editable Markdown source is in [`wiki/`](./wiki/). The browsable HTML version
