@@ -76,8 +76,8 @@ MPD/moOde queue and room playback
 configured as an interactive Aqua-session job so endpoint-launched capture
 receives the SSL 2 signal just as the terminal process does:</p>
 <ul>
-<li><code>com.brianwis.mabel-service</code> on <code>127.0.0.1:8788</code>;</li>
-<li><code>com.brianwis.mabel-handset</code> on HTTPS port <code>8790</code>.</li>
+<li>a user-specific Mabel bridge LaunchAgent on <code>127.0.0.1:8788</code>;</li>
+<li>a user-specific Mabel handset LaunchAgent on HTTPS port <code>8790</code>.</li>
 </ul>
 <p>After a reboot, verify <code>/health</code> on both services before testing. The Realtime</p>
 <p>client still depends on the bridge being available first.</p>

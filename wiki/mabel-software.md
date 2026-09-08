@@ -74,8 +74,8 @@ The bridge and handset have persistent user LaunchAgents. The Mabel bridge is
 configured as an interactive Aqua-session job so endpoint-launched capture
 receives the SSL 2 signal just as the terminal process does:
 
-- `com.brianwis.mabel-service` on `127.0.0.1:8788`;
-- `com.brianwis.mabel-handset` on HTTPS port `8790`.
+- a user-specific Mabel bridge LaunchAgent on `127.0.0.1:8788`;
+- a user-specific Mabel handset LaunchAgent on HTTPS port `8790`.
 
 After a reboot, verify `/health` on both services before testing. The Realtime
 client still depends on the bridge being available first.
