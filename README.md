@@ -48,7 +48,7 @@ The site is served alongside the Seeburg wiki by the shared LAN wiki server.
 Start or restart that server with:
 
 ```sh
-python3 /Users/brianwis/.openclaw/workspace/seeburg-wallbox/web/wiki-server.py
+python3 /path/to/seeburg-wallbox/web/wiki-server.py
 ```
 
 Then open `http://<Mac-LAN-IP>:8765/multiphone/` from a browser on the Mac or

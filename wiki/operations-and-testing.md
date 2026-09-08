@@ -36,7 +36,7 @@ command examples.
 From the project directory:
 
 ```sh
-cd /Users/brianwis/.openclaw/workspace/Multiphone
+cd /path/to/shyvers-multiphone-mabel
 python3 operator/main.py --number 1 --dry-run
 ```
 
