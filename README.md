@@ -32,7 +32,11 @@ Multiple stations could share a request line, while the requested music played
 separately through the establishment's sound system. This project preserves
 that division: the antique Multiphone is the customer interface, Mabel is the
 operator, and Now Playing is the modern equivalent of the operator's queue and
-record library. See the [historical operating model](wiki/historical-operating-model.md)
+record library.
+
+Shyvers did not allow the lady operators to use their real names on the line.
+Several chose the name Mabel, which is why this project uses Mabel for its
+modern operator. See the [historical operating model](wiki/historical-operating-model.md)
 for the source-backed details and modern mapping.
 
 ## Wiki
