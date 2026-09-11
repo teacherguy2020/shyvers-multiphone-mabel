@@ -74,10 +74,30 @@ let normalSelectionStarted = false;
 let lastCallerTranscript = '';
 let normalTranscriptBuffer = '';
 let initialRingbackPromise = null;
+let liveSocket = null;
+let liveStarted = false;
+let liveOffScript = false;
+let liveOutputContext = null;
+let liveInputContext = null;
+let liveInputSource = null;
+let liveInputProcessor = null;
+let liveInputMute = null;
+let liveOutputTime = 0;
+// Match the Mac Live voice path: voice gain 1.78275x plus the +10 dB,
+// with an additional 50% iPad Live voice lift.
+// HIFI-DSD master bus gain. Clamp each decoded sample before Web Audio so
+// the browser path cannot wrap or produce invalid PCM.
+const liveVoiceOutputGain = 1.78275 * 1.5 * Math.pow(10, 10 / 20);
+let liveTranscriptBuffer = '';
+let liveTranscriptTimer = null;
+let liveMabelLineOpen = false;
+let liveConfirmationStyleIndex = 0;
+let liveConfirmationRetryTimer = null;
 const affectionateAddressInstruction = 'Use affectionate forms of address sparingly and naturally—most replies should have none, never use one in consecutive replies, and use at most one every few turns. Choose only one when it genuinely fits: honey, sport, dear, kiddo, boss, sugar, sweetheart, my dear, doll, or champ. Keep Mabel fun, warm, and lightly flirtatious, tasteful, concise, and professionally demure.';
 
 const instructions = `You are Mabel, a 22-year-old 1940s telephone operator and record spinner for Multiphone in Seattle, Washington. English is mandatory: speak ONLY American English in every response, even if the caller speaks another language or the transcription is uncertain. Never answer in Portuguese, Spanish, French, or any other language. Use a bright, youthful, energetic, lightly sassy American delivery. Affectionate forms of address are occasional seasoning only: most replies should have none, never use one in consecutive replies, and use at most one every few turns. This is the VIP line and this call is already off-script. Begin with exactly this English greeting: "Thanks for calling the VIP line—Mabel here at Multiphone! Whaddya wanna hear?" Do not translate, paraphrase, or add anything before that greeting. Do not explain available options. You may use the bounded music tools for albums, artists, playlists, mixes, and now-playing information. After a successful album, artist, playlist, or mix action, briefly confirm, say a varied goodbye, and stop asking questions. Now-playing can continue the conversation. For a numbered Multiphone request, repeat the recognized number first and then give a very brief, clipped record-room acknowledgment such as "Lemme grab that off the shelf." or "Hold the line, I’m getting that record." Keep this acknowledgment urgent and workmanlike, not excited or celebratory; do not use a pet name, exclamation point, joke, or follow-up question. Never invent catalog or playback results; use only tool output. The direct song-transmission line serves Clem's Place, a lively bar in Seattle; mention Clem's Place occasionally when natural, but do not force it into every reply. If the caller says goodbye, give a brief warm goodbye and stop.`;
 const normalInstructions = `You are Mabel, a 22-year-old 1940s telephone operator and record spinner for Multiphone in Seattle, Washington. Speak ONLY American English. Be bright, energetic, brisk, lightly sassy, humorous, and professionally demure. Use affectionate names sparingly: most replies should have none, never use one in consecutive replies, and use at most one every few turns. This is the normal Multiphone line, not the VIP line and not off-script. Begin with exactly a short greeting such as "Multiphone! Mabel here—hope everyone’s having a great time at Clem’s. What number?" Always begin with Multiphone, identify Mabel, acknowledge Clem's Place, and ask for a valid song number from 1 through 170. For a numbered request, repeat the recognized number first and then give a very brief, clipped record-room acknowledgment such as "Lemme grab that off the shelf." or "Hold the line, I’m getting that record." Keep it urgent and workmanlike, not excited or celebratory; do not use a pet name, exclamation point, joke, or follow-up question in that acknowledgment. Use only the validated numbered tool; do not use off-script music tools or invent titles, artists, or playback results. The direct song-transmission line serves Clem's Place, a lively bar in Seattle; mention Clem's Place in the opening and occasionally thereafter when natural, but do not force it into every reply. After the successful record request, announce the song information when supplied and say a brief goodbye; do not keep listening. If the caller says goodbye, reply warmly and end the call.`;
+const liveNormalInstructions = `You are Mabel, a young American telephone operator working at a central music station in Seattle in the 1940s. Speak only clear American English in a youthful, light, high-register telephone voice with authentic 1940s diction and natural period phrasing. This is the normal numbered Multiphone line serving Clem’s Place. Keep exchanges concise, conversational, and varied. Ask for a number from 1 through 170 and wait for the local application to validate it. The local application is authoritative: never invent or infer a title, artist, queue position, credits, playback state, success, or error. When the local application supplies a confirmation, repeat only its supplied digit words in the same order and end with an unmistakable high-rising yes-or-no question. When the local application supplies a result, use only those supplied facts. You may express approval of a selection in your own words, but vary the wording and do not rely on a repeated catchphrase. Keep reactions natural and not overly energetic. If the caller explicitly says “go off-script” or “I'm a VIP,” the local application will switch this call into the expanded private music service; acknowledge that change and follow only the authoritative results it supplies. Maintain a consistent conversational volume throughout the call. Do not become louder, more projected, or more animated at the end. Final acknowledgments and goodbyes should be spoken at the same volume and vocal intensity as the preceding conversation, as a quiet telephone goodbye to one person rather than an announcement. Do not emphasize or project the final words. Stop speaking immediately when the caller interrupts.`;
 const tools = [
   { type: 'function', name: 'submit_multiphone_number', description: 'Queue a valid Multiphone song number from 1 through 170.', parameters: { type: 'object', properties: { number: { type: 'integer', minimum: 1, maximum: 170 } }, required: ['number'], additionalProperties: false } },
   { type: 'function', name: 'offscript_play_album', description: 'Play a matching album.', parameters: { type: 'object', properties: { album: { type: 'string', minLength: 1, maxLength: 200 } }, required: ['album'], additionalProperties: false } },
@@ -124,6 +144,308 @@ async function api(path, body, method = 'POST') {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
   return payload;
+}
+function liveSend(event) {
+  if (liveSocket && liveSocket.readyState === WebSocket.OPEN) liveSocket.send(JSON.stringify(event));
+}
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+async function startLiveAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('This browser does not support Web Audio');
+  // Use Safari's native output rate; each 24 kHz Live buffer is resampled by
+  // Web Audio. iPadOS can leave a forced 24 kHz output context silent.
+  liveOutputContext = new AudioContextClass();
+  // Let Safari use the microphone's native context rate (usually 48 kHz).
+  // Requesting a 24 kHz input context can leave ScriptProcessorNode silent on
+  // iPadOS even though getUserMedia succeeds. Downsample at the boundary
+  // below before sending PCM to GPT-Live.
+  liveInputContext = new AudioContextClass();
+  await liveOutputContext.resume();
+  await liveInputContext.resume();
+  liveInputSource = liveInputContext.createMediaStreamSource(micStream);
+  liveInputProcessor = liveInputContext.createScriptProcessor(4096, 1, 1);
+  liveInputMute = liveInputContext.createGain();
+  // A strictly zero gain can cause Safari to optimize the input graph away.
+  // Keep it effectively inaudible while retaining a live processing path.
+  liveInputMute.gain.value = 0.00001;
+  liveInputProcessor.onaudioprocess = event => {
+    if (!liveStarted || !liveSocket || liveSocket.readyState !== WebSocket.OPEN) return;
+    const input = event.inputBuffer.getChannelData(0);
+    const ratio = liveInputContext.sampleRate / 24000;
+    const sampleCount = Math.max(1, Math.floor(input.length / ratio));
+    const bytes = new Uint8Array(sampleCount * 2);
+    const view = new DataView(bytes.buffer);
+    for (let index = 0; index < sampleCount; index += 1) {
+      const sourceIndex = Math.min(input.length - 1, Math.floor(index * ratio));
+      const sample = Math.max(-1, Math.min(1, input[sourceIndex]));
+      view.setInt16(index * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
+    }
+    liveSend({ type: 'session.input_audio.append', audio: bytesToBase64(bytes) });
+  };
+  liveInputSource.connect(liveInputProcessor);
+  liveInputProcessor.connect(liveInputMute);
+  liveInputMute.connect(liveInputContext.destination);
+}
+function playLiveAudio(value) {
+  if (!liveOutputContext) return;
+  if (liveOutputContext.state !== 'running') liveOutputContext.resume().catch(() => {});
+  const bytes = base64ToBytes(value);
+  if (bytes.length < 2) return;
+  const sampleCount = Math.floor(bytes.length / 2);
+  const audioBuffer = liveOutputContext.createBuffer(1, sampleCount, 24000);
+  const channel = audioBuffer.getChannelData(0);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sample = (view.getInt16(index * 2, true) / 32768) * liveVoiceOutputGain;
+    channel[index] = Math.max(-1, Math.min(1, sample));
+  }
+  const source = liveOutputContext.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(liveOutputContext.destination);
+  const now = liveOutputContext.currentTime;
+  if (liveOutputTime === 0) liveOutputTime = now + 0.75;
+  else if (liveOutputTime < now + 0.02) liveOutputTime = now + 0.02;
+  source.start(liveOutputTime);
+  liveOutputTime += sampleCount / 24000;
+  source.onended = () => source.disconnect();
+}
+function sendLiveCommentary(content) {
+  liveSend({ type: 'session.commentary.append', event_id: `mabel_web_${Date.now()}`, delegation_id: null, content });
+}
+function appendLiveMabelDelta(delta) {
+  if (!liveMabelLineOpen) {
+    transcriptNode.textContent += 'Mabel: ';
+    liveMabelLineOpen = true;
+  }
+  transcriptNode.textContent += delta;
+}
+function finishLiveMabelLine() {
+  if (!liveMabelLineOpen) return;
+  transcriptNode.textContent += '\n';
+  liveMabelLineOpen = false;
+}
+function liveAffirmative(text) {
+  return /\b(yes|yeah|yep|yup|uh[- ]?huh|right|exactly|that'?s (right|the one|it|correct)|that is (right|the one|it|correct)|you got it|sure|correct)\b/i.test(text);
+}
+function liveNegative(text) {
+  return /\b(no|nope|wrong|not that|wait|hold on|sorry)\b/i.test(text);
+}
+const liveOffScriptTriggerPattern = /\bgo[ -]?off[ -]?script\b|\boff[ -]?script\b|\bi(?:['’]m| am)\s+a\s+v(?:\.?i\.?p\.?)\b/i;
+function liveOffScriptRequestFromText(text) {
+  const value = String(text || '').trim().replace(/[.!?]+$/, '');
+  if (/\b(?:what(?:'s| is)|now)\s+(?:currently\s+)?playing\b|\bnow playing\b/i.test(value)) return { action: 'now_playing' };
+  const mix = value.match(/\b(?:play|put on|make|give me)\b.*?\bmix\b(?:\s+of)?\s+(.+)/i) || value.match(/\bmix\s+(?:of\s+)?(.+)/i);
+  if (mix) {
+    const artists = mix[1].split(/\s+and\s+|\s*,\s*/i)
+      .map(item => item.replace(/^(?:songs?|records?|music)\s+by\s+/i, '').trim())
+      .filter(Boolean);
+    if (artists.length >= 2) return { action: 'play_mix', artists };
+  }
+  const album = value.match(/\b(?:play|put on|get|find|queue)\s+(?:the\s+)?album\s+[“"]?(.+?)[”"]?$/i)
+    || value.match(/\b(?:play|put on|get|find|queue)\s+(?:the\s+)?[“"]?(.+?)[”"]?\s+album\b/i);
+  if (album) return { action: 'play_album', album: album[1].trim() };
+  const playlist = value.match(/\b(?:play|put on|get|find|queue)\s+(?:the\s+)?playlist\s+[“"]?(.+?)[”"]?$/i)
+    || value.match(/\b(?:play|put on|get|find|queue)\s+(?:the\s+)?[“"]?(.+?)[”"]?\s+playlist\b/i);
+  if (playlist) return { action: 'play_playlist', playlist: playlist[1].trim() };
+  const artist = value.match(/\b(?:play|put on|get|find|queue)\s+(?:some\s+)?(?:music|records?|songs?)?\s*(?:by|from)\s+(.+)/i);
+  if (artist) return { action: 'play_artist', artist: artist[1].trim() };
+  const genericPlay = value.match(/\b(?:play|put on|give me|let me hear|listen to|i(?:'d| would) like to hear)\s+(?:some\s+)?(.+)/i);
+  if (genericPlay && !/\b(?:album|playlist|mix|now playing)\b/i.test(genericPlay[1])) return { action: 'play_artist', artist: genericPlay[1].trim() };
+  return null;
+}
+function liveOffScriptResultInstructions(request, envelope) {
+  const result = envelope?.result && typeof envelope.result === 'object' ? envelope.result : envelope;
+  const facts = JSON.stringify(result || {});
+  if (request.action === 'now_playing') return `The local Multiphone application returned this authoritative now-playing result: ${facts}. Report only the supplied title, artist, and playback facts. Do not invent anything. Remain in VIP mode and keep listening.`;
+  return `The local Multiphone application returned this authoritative VIP result for ${request.action}: ${facts}. Briefly tell the caller only what the result establishes, and say that playback is starting only if the result says it started. Do not invent a title, artist, queue state, or success. Then give a brief varied goodbye containing “bye” or “goodbye” at the same conversational volume and pace. Do not ask another question; this is the final response and end the call.`;
+}
+async function processLiveOffScriptRequest(request) {
+  if (normalSelectionStarted || normalFinalResponsePending || !mabelSessionId) return;
+  normalSelectionStarted = true;
+  try {
+    const body = { sessionId: mabelSessionId, action: request.action };
+    if (request.action === 'play_album') body.album = request.album;
+    if (request.action === 'play_artist') body.artist = request.artist;
+    if (request.action === 'play_playlist') body.playlist = request.playlist;
+    if (request.action === 'play_mix') body.artists = request.artists;
+    const result = await api('/shyvers/offscript', body);
+    normalFinalResponsePending = request.action !== 'now_playing';
+    sendLiveCommentary(liveOffScriptResultInstructions(request, result));
+  } catch (error) {
+    normalFinalResponsePending = true;
+    sendLiveCommentary(`The local Multiphone application reported this authoritative VIP error: “${error.message}”. Say briefly that the central station could not complete that private request, then give a quiet goodbye containing “bye” or “goodbye” and end the call. Do not invent a result.`);
+  } finally {
+    normalSelectionStarted = false;
+  }
+}
+function liveNumberWords(number) {
+  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  return String(number).split('').map(digit => words[Number(digit)]).join(' ');
+}
+function requestLiveConfirmation(number) {
+  if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
+  liveConfirmationRetryTimer = null;
+  const leadIns = [
+    'I don’t want to grab the wrong one, so just confirming',
+    'Let me make sure I have the right record before I fetch it—just confirming',
+    'It’s a bit noisy here, so just confirming',
+    'Before I pull that one from the cabinet, just confirming',
+  ];
+  const spokenDigits = liveNumberWords(number);
+  const leadIn = leadIns[liveConfirmationStyleIndex % leadIns.length];
+  liveConfirmationStyleIndex += 1;
+  sendLiveCommentary(`The local application supplied the exact confirmation. Say exactly: “${leadIn}, ${spokenDigits}?” End with a clearly audible high-rising yes-or-no question on the final digit. Do not say or invent any other number.`);
+  liveConfirmationRetryTimer = setTimeout(() => {
+    liveConfirmationRetryTimer = null;
+    if (!currentNormalMode || normalFinalResponsePending || normalPendingNumber !== number) return;
+    setStatus('Mabel is waiting for confirmation…');
+    requestLiveConfirmation(number);
+  }, 1800);
+}
+function queueLiveTranscript(delta) {
+  liveTranscriptBuffer += String(delta || '');
+  clearTimeout(liveTranscriptTimer);
+  liveTranscriptTimer = setTimeout(() => {
+    const text = liveTranscriptBuffer.trim();
+    liveTranscriptBuffer = '';
+    if (!text) return;
+    lastCallerTranscript = text;
+    finishLiveMabelLine();
+    transcriptNode.textContent += `You: ${text}\n`;
+    handleLiveTranscript(text).catch(error => setStatus(`Mabel input error: ${error.message}`));
+  }, 1200);
+}
+async function handleLiveTranscript(text) {
+  if (!liveOffScript && liveOffScriptTriggerPattern.test(text) && !normalFinalResponsePending) {
+    liveOffScript = true;
+    normalPendingNumber = null;
+    normalAcknowledgmentRequested = false;
+    sendLiveCommentary('The caller explicitly invoked the private off-script service. Acknowledge that briefly in period-appropriate language, then ask what music they would like. Do not mention software, tools, or technical details. Remain in VIP mode.');
+    return;
+  }
+  if (liveOffScript) {
+    const request = liveOffScriptRequestFromText(text);
+    if (request) await processLiveOffScriptRequest(request);
+    else sendLiveCommentary('The caller is in VIP mode but has not yet given a bounded request. Ask briefly whether they want an album, an artist, a playlist, a mix, or to know what is playing. Do not guess their request.');
+    return;
+  }
+  const candidate = songNumberFromText(text);
+  if (normalPendingNumber !== null) {
+    if (candidate !== null && candidate !== normalPendingNumber) {
+      normalPendingNumber = candidate;
+      requestLiveConfirmation(candidate);
+    } else if (liveNegative(text)) {
+      requestLiveConfirmation(normalPendingNumber);
+    } else if (liveAffirmative(text)) {
+      if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
+      liveConfirmationRetryTimer = null;
+      await processLiveNormalSelection(normalPendingNumber);
+    } else if (candidate !== null) {
+      normalPendingNumber = candidate;
+      requestLiveConfirmation(candidate);
+    }
+    return;
+  }
+  if (candidate !== null) {
+    normalPendingNumber = candidate;
+    requestLiveConfirmation(candidate);
+  }
+}
+function liveNormalSelectionInstructions(selection, outcome) {
+  const trackName = [outcome?.title, outcome?.artist].filter(value => String(value || '').trim()).join(' by ');
+  const result = JSON.stringify(outcome || selection || {});
+  const track = trackName ? ` State the supplied title and artist exactly as “${trackName}”.` : '';
+  let timing = 'Use only the supplied queue and playback facts.';
+  if (outcome?.queuedBehindJukebox) {
+    const total = Number(outcome.jukeboxQueueLength) || 1;
+    const spins = Math.max(1, total - 1);
+    timing = `Say that it was added to the records waiting on your desk for Clem’s Place and will come up in exactly ${spins} spin${spins === 1 ? '' : 's'} or so. Do not change that number.`;
+  } else if (outcome?.playbackStarted || outcome?.playbackDeferred) {
+    timing = 'Say that the record started playing immediately.';
+  }
+  return `The local Multiphone application returned this authoritative result: ${result}. The request succeeded.${track} ${timing} Give a brief, natural, varied approval in your own words if one fits; do not repeat a catchphrase. Then give a brief goodbye of your choice containing “bye” or “goodbye.” Keep the reaction and goodbye at the same conversational volume and intensity as the preceding speech. Do not become louder, projected, or theatrical, and do not ask another question.`;
+}
+async function processLiveNormalSelection(number) {
+  if (normalSelectionStarted || !currentNormalMode) return;
+  normalSelectionStarted = true;
+  normalPendingNumber = null;
+  try {
+    const selectionPromise = api('/shyvers/response', { sessionId: mabelSessionId, number, suppressSpeech: true, deferPlayback: true });
+    const footstepsPromise = playLocalEffect('footsteps');
+    const selection = await selectionPromise;
+    await footstepsPromise;
+    const outcome = selection?.result && typeof selection.result === 'object' ? selection.result : selection;
+    if (outcome.playbackDeferred && outcome.mpdSongId) await api('/shyvers/start-song', { sessionId: mabelSessionId, songId: Number(outcome.mpdSongId) });
+    normalFinalResponsePending = true;
+    sendLiveCommentary(liveNormalSelectionInstructions(selection, outcome));
+  } catch (error) {
+    normalFinalResponsePending = true;
+    sendLiveCommentary(`The local application reported this authoritative error: “${error.message}”. Say briefly that the central station could not complete the request, then say goodbye and end the call. Do not invent a result.`);
+  }
+}
+function handleLiveEvent(event) {
+  if (event.type === 'session.started') {
+    liveStarted = true;
+    setStatus('Mabel is on the normal Live line.');
+    (async () => {
+      await (initialRingbackPromise || playLocalEffect('ringback'));
+      sendLiveCommentary('Begin now. Say exactly one brief greeting: “Multiphone! Mabel here—hello to Clem’s Place. What number, please?” Then listen.');
+    })();
+  } else if (event.type === 'session.output_audio.delta' || event.type === 'response.output_audio.delta' || event.type === 'response.audio.delta') {
+    responseAudioDone = false;
+    // Live WebSocket audio deltas carry the base64 PCM in `delta`, matching
+    // the Mac Live client. Keep the legacy `audio` fallback for compatibility
+    // with older relay payloads, but never pass an absent value to atob().
+    const audioDelta = event.delta ?? event.audio;
+    if (typeof audioDelta === 'string' && audioDelta.length > 0) playLiveAudio(audioDelta);
+    else setStatus('Mabel Live audio event contained no PCM delta.');
+  } else if (event.type === 'session.output_audio.done' || event.type === 'response.output_audio.done' || event.type === 'response.audio.done') {
+    finishLiveMabelLine();
+    responseAudioDone = true;
+    maybeHangUpAfterGoodbye();
+  } else if (event.type === 'session.output_transcript.delta') {
+    const delta = String(event.delta || '');
+    appendLiveMabelDelta(delta);
+    if (isMabelGoodbye(delta)) {
+      mabelGoodbyeDetected = true;
+      maybeHangUpAfterGoodbye();
+    }
+  } else if (event.type === 'session.input_transcript.delta') {
+    queueLiveTranscript(event.delta);
+  } else if (event.type === 'error') {
+    setStatus(`Mabel error: ${event.error?.message || event.error || 'unknown error'}`);
+  }
+}
+async function startLiveTransport() {
+  await startLiveAudio();
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  liveSocket = new WebSocket(`${protocol}//${location.hostname}:8791/live`);
+  liveSocket.onopen = () => liveSocket.send(JSON.stringify({
+    type: 'session.start', event_id: `mabel_web_start_${Date.now()}`,
+    session: {
+      model: 'gpt-live-1',
+      instructions: liveNormalInstructions,
+      audio: { format: { type: 'audio/pcm', rate: 24000 }, output: { voice: 'sage' } },
+      delegation: { type: 'client' },
+    },
+  }));
+  liveSocket.onmessage = message => {
+    try { handleLiveEvent(JSON.parse(message.data)); } catch (error) { setStatus(`Mabel Live protocol error: ${error.message}`); }
+  };
+  liveSocket.onerror = () => setStatus('Mabel Live relay connection failed.');
+  liveSocket.onclose = () => { if (!closing && callMode === 'voice') setStatus('Mabel Live connection closed.'); };
 }
 function sendSession(normalMode) {
   const sessionInstructions = `${normalMode ? normalInstructions : instructions} ${affectionateAddressInstruction}`;
@@ -333,14 +655,20 @@ async function startCall(normalMode = false) {
   callMode = 'voice';
   currentNormalMode = normalMode;
   offScript = !normalMode;
+  liveOffScript = false;
   // Start this from the iPad button gesture so Safari authorizes subsequent
   // local effect playback (notably the heels, which happen asynchronously).
   initialRingbackPromise = normalMode ? playLocalEffect('ringback') : null;
   setStatus(normalMode ? 'Opening the normal Multiphone line…' : 'Opening the VIP line…');
   try {
-    mabelSessionId = (await api('/shyvers/call', { event: 'coin', station: normalMode ? 'iPad Normal' : 'iPad VIP', suppressGreeting: true })).sessionId;
-    const token = (await api('/realtime-token', { mode: normalMode ? 'normal' : 'vip' })).value;
+    mabelSessionId = (await api('/shyvers/call', { event: 'coin', station: normalMode ? 'iPad Normal' : 'iPad VIP', suppressGreeting: true, duckVolume: normalMode })).sessionId;
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (normalMode) {
+      await startLiveTransport();
+      hangupButton.disabled = false;
+      return;
+    }
+    const token = (await api('/realtime-token', { mode: 'vip' })).value;
     pc = new RTCPeerConnection();
     pc.ontrack = event => { remoteAudio.srcObject = event.streams[0]; remoteAudio.play().catch(() => {}); };
     micStream.getTracks().forEach(track => pc.addTrack(track, micStream));
@@ -416,13 +744,26 @@ async function startCall(normalMode = false) {
 }
 async function endCall() {
   if (hangupTimer) { clearTimeout(hangupTimer); hangupTimer = null; }
+  clearTimeout(liveTranscriptTimer);
+  if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
+  liveConfirmationRetryTimer = null;
+  liveTranscriptTimer = null;
+  liveStarted = false;
+  if (liveInputProcessor) liveInputProcessor.onaudioprocess = null;
+  if (liveInputSource) liveInputSource.disconnect();
+  if (liveInputProcessor) liveInputProcessor.disconnect();
+  if (liveInputMute) liveInputMute.disconnect();
+  if (liveSocket && liveSocket.readyState < WebSocket.CLOSING) liveSocket.close(1000, 'call ended');
+  if (liveInputContext) await liveInputContext.close().catch(() => {});
+  if (liveOutputContext) await liveOutputContext.close().catch(() => {});
   if (micStream) micStream.getTracks().forEach(track => track.stop());
   if (pc) pc.close();
   if (mabelSessionId) await api('/shyvers/end', { sessionId: mabelSessionId }).catch(() => {});
   if (textSessionId) await api('/text-end', { sessionId: textSessionId }).catch(() => {});
   const wasVoiceCall = callMode === 'voice';
   if (wasVoiceCall) await playLocalEffect('hangup');
-  micStream = null; pc = null; events = null; mabelSessionId = null; textSessionId = null; callMode = null; currentNormalMode = false; normalFinalResponsePending = false; normalPendingNumber = null; normalAcknowledgmentRequested = false; normalSelectionStarted = false; lastCallerTranscript = ''; normalTranscriptBuffer = ''; initialRingbackPromise = null;
+  finishLiveMabelLine();
+  micStream = null; pc = null; events = null; liveSocket = null; liveInputSource = null; liveInputProcessor = null; liveInputMute = null; liveInputContext = null; liveOutputContext = null; liveOutputTime = 0; liveTranscriptBuffer = ''; liveOffScript = false; mabelSessionId = null; textSessionId = null; callMode = null; currentNormalMode = false; normalFinalResponsePending = false; normalPendingNumber = null; normalAcknowledgmentRequested = false; normalSelectionStarted = false; lastCallerTranscript = ''; normalTranscriptBuffer = ''; initialRingbackPromise = null;
   mabelGoodbyeDetected = false; responseAudioDone = false;
   textInput.disabled = true;
   textSend.disabled = true;

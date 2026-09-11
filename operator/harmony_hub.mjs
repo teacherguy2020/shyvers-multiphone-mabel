@@ -5,7 +5,7 @@
  * The module keeps one connection open, probes it with WebSocket ping/pong,
  * reconnects after close/staleness, and retries failed requests on a fresh
  * connection. It intentionally knows nothing about a particular receiver or
- * room; device/activity names come from the user's generated local mapping.
+ * room; device/activity names come from the user's local Harmony mapping.
  */
 
 import { readFile } from 'node:fs/promises';

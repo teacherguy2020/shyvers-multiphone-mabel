@@ -17,7 +17,15 @@ Multiphone/
 
 │   ├── mabel_voice.py       # fixed-window microphone fallback
 
-│   └── mabel_realtime.mjs   # live Realtime agent
+│   ├── mabel_realtime.mjs   # unchanged legacy Realtime agent
+
+│   ├── mabel_live.mjs       # preferred GPT-Live/Sage agent
+
+│   ├── mabel_live_player.swift # native Live PCM/FIFO player
+
+│   ├── mabel_live_web.mjs   # secure iPad Live relay
+
+│   └── harmony_volume.mjs   # bridge-owned Denon duck/restore helper
 
 ├── sounds/                  # local call and record-retrieval effects
 
@@ -50,7 +58,7 @@ python3 operator/main.py --number 1 --dry-run
 </code></pre>
 <p>For a real numbered selection, omit <code>--dry-run</code>. For a keyboard loop, omit</p>
 <p><code>--number</code>.</p>
-<p>For the local Mabel bridge and Realtime voice agent, use two terminals:</p>
+<p>For the preferred local Mabel bridge and GPT-Live voice agent, use two terminals:</p>
 <pre><code>
 # Terminal 1
 
@@ -58,9 +66,9 @@ python3 operator/mabel_service.py --voice nova
 
 
 
-# Terminal 2
+# Terminal 2 — keep this one line intact
 
-node operator/mabel_realtime.mjs --input :0
+node operator/mabel_live.mjs --duplex full --playback-mode stream --voice-speed 1.0 --gain 1.78275 --master-gain-db 10 --telephone-eq --output-device &quot;HIFI DSD&quot; --input :0
 
 </code></pre>
 <p>The SSL 2 is currently input <code>:0</code>. Confirm available AVFoundation devices with:</p>
@@ -68,7 +76,7 @@ node operator/mabel_realtime.mjs --input :0
 ffmpeg -hide_banner -f avfoundation -list_devices true -i &quot;&quot;
 
 </code></pre>
-<p>Realtime call effects are stored locally as:</p>
+<p>Live call effects are stored locally as:</p>
 <pre><code>
 sounds/
 
@@ -79,25 +87,33 @@ sounds/
 └── phone-hangup-click.m4a
 
 </code></pre>
-<p>They play through the Mac's default output with <code>afplay</code>. Mabel's microphone</p>
-<p>input is suppressed while an effect or response is playing. The heels effect is</p>
-<p>triggered after Mabel's brief retrieval acknowledgment for a valid numbered</p>
-<p>selection; it is not played for conversational or off-script turns. Mabel's reply waits</p>
-<p>for the effect to finish, and playback does not begin until the effect is done.</p>
-<p>If the files are stored elsewhere, start Realtime</p>
-<p>with <code>--sounds-dir /path/to/sounds</code>.</p>
+<p>They are routed to the configured Live output device (<code>HIFI DSD</code> on the current</p>
+<p>installation). Mabel's microphone input is suppressed while an effect or</p>
+<p>response is playing. The heels effect is triggered after Mabel's brief</p>
+<p>retrieval acknowledgment for a valid numbered selection; it is not played for</p>
+<p>conversational or off-script turns. Playback does not begin until the effect is</p>
+<p>done. If the files are stored elsewhere, add</p>
+<p><code>--sounds-dir /path/to/sounds</code> to the Live command.</p>
 <p>The <code>mabel_voice.py</code> fallback can be tested with <code>--seconds 5</code> when a longer</p>
 <p>capture window is needed.</p>
 <h2>Audio routing</h2>
-<p>Mabel's Realtime audio is played through the Mac's default output. The SSL 2 is</p>
-<p>the current microphone interface. SoundSource may be used to apply a telephone</p>
-<p>effect to Mabel's output; keep the microphone input pointed at the SSL 2 and</p>
-<p>avoid routing Mabel's output back into that input. A practical starting point is</p>
-<p>a band-limited telephone sound, but the EQ is an external audio choice rather</p>
-<p>than part of the Mabel service.</p>
+<p>The SSL 2 is the current microphone interface at <code>:0</code>. The preferred Live</p>
+<p>command applies the telephone band-pass in the native player and routes voice</p>
+<p>and effects to CoreAudio device <code>HIFI DSD</code>; SoundSource is not required. Keep</p>
+<p>the microphone input pointed at the SSL 2 and avoid routing Mabel's output back</p>
+<p>into that input. The native Live FIFO starts with 1.5 seconds of PCM and can</p>
+<p>adapt upward when Live delivery arrives in bursts.</p>
+<p>The browser Live path is different: Safari plays audio through the iPad's</p>
+<p>selected output. It uses the Mac HTTPS handset on port <code>8790</code> and secure Live</p>
+<p>relay on <code>8791</code>; it cannot route the iPad speaker through the Mac's HIFI DSD.</p>
+<p>The normal Pico path uses the Mac bridge and HIFI DSD defaults.</p>
+<p>Use one-line commands for manual tests. Splitting a command across lines while</p>
+<p>omitting an option can silently disable telephone EQ, output selection, or</p>
+<p>master gain. Verify the startup log includes <code>telephoneEq: true</code>,</p>
+<p><code>outputDevice: HIFI DSD</code>, and the expected <code>masterGainDb</code>.</p>
 <h2>Now Playing deployment</h2>
 <p>The Now Playing API is deployed at the installation's configured host on port</p>
-<p><code>3101</code>; it controls the configured MPD/moOde host. Set the API address for your</p>
+<p><code>3101</code>; it controls the configured MPD/moOode host. Set the API address for your</p>
 <p>installation before running the operator. Changes to the Now Playing routes require</p>
 <p>restarting the managed <code>now-playing.service</code> and verifying that exactly one</p>
 <p>current process owns port 3101.</p>
@@ -109,10 +125,13 @@ sounds/
 <p>An alert-only health watcher now checks service status, port ownership, listener</p>
 <p>PID, and restart churn every 15 minutes. It does not auto-restart the service or</p>
 <p>interrupt playback.</p>
-<h2>VIP automation roadmap</h2>
+<h2>VIP and off-script testing</h2>
 <p>VIP mode currently means expanded Mabel music controls from the iPad voice/text</p>
-<p>handset. Lighting scenes, Harmony Hub activities, and other room automation</p>
-<p>are future integrations. When implemented, test each as a named action with:</p>
+<p>handset and Live calls. Say “go off-script” or “I'm a VIP” during a Live call,</p>
+<p>then request an album, artist, playlist, mix, or now-playing result. The bridge</p>
+<p>executes only bounded actions and returns authoritative results to GPT-Live;</p>
+<p>lighting scenes, Harmony Hub activities, and other room automation are future</p>
+<p>integrations. When implemented, test each as a named action with:</p>
 <ol>
 <li>a validated allow-listed action name;</li>
 <li>an explicit target/argument schema;</li>
@@ -130,6 +149,12 @@ python3 -m py_compile web/build-wiki.py web/wiki-server.py operator/*.py
 
 node --check operator/mabel_realtime.mjs
 
+node --check operator/mabel_live.mjs
+
+node --check operator/mabel_live_web.mjs
+
+node --check operator/harmony_volume.mjs
+
 </code></pre>
 <p>The shared LAN wiki server serves this project at:</p>
 <pre><code>
@@ -137,5 +162,6 @@ http://&lt;Mac-LAN-IP&gt;:8765/multiphone/
 
 </code></pre>
 <p>The Seeburg wiki remains at <code>/wiki/</code> on the same server.</p>
+<p>_Last updated: 2026-09-11_</p>
 </table></main></div>
 </body></html>

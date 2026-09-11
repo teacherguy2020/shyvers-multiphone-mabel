@@ -360,7 +360,7 @@ class HandsetHandler(BaseHTTPRequestHandler):
             if state:
                 bridge_json(self.server, "/shyvers/end", {"sessionId": state["bridge_session_id"]})
             return self.send_json(200, {"ok": True})
-        if path in {"/shyvers/call", "/shyvers/response", "/shyvers/offscript", "/shyvers/end"}:
+        if path in {"/shyvers/call", "/shyvers/response", "/shyvers/start-song", "/shyvers/offscript", "/shyvers/end"}:
             return self.proxy_to_bridge(path)
         return self.send_json(404, {"ok": False, "error": "not found"})
 
@@ -451,7 +451,7 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--bridge-url", default="http://127.0.0.1:8788")
-    parser.add_argument("--cert-ip", default="127.0.0.1", help="LAN IP included in the self-signed certificate; override for remote handset access")
+    parser.add_argument("--cert-ip", default="127.0.0.1", help="LAN IP included in the certificate; override for remote handset access")
     parser.add_argument("--cert", default=str(project_dir / "state" / "mabel-handset-cert.pem"))
     parser.add_argument("--key", default=str(project_dir / "state" / "mabel-handset-key.pem"))
     parser.add_argument("--model", default="gpt-realtime")
@@ -466,6 +466,14 @@ def main():
     server.openai_key = keychain_value(OPENAI_SERVICE, OPENAI_ACCOUNT)
     server.model = args.model
     server.voice = args.voice
+    node_binary = "/opt/homebrew/bin/node" if Path("/opt/homebrew/bin/node").exists() else "node"
+    live_relay_script = project_dir / "operator" / "mabel_live_web.mjs"
+    server.live_relay_process = subprocess.Popen([
+        node_binary, str(live_relay_script),
+        "--port", "8791",
+        "--cert", str(cert_path),
+        "--key", str(key_path),
+    ], cwd=project_dir)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile=cert_path, keyfile=key_path)
     server.socket = context.wrap_socket(server.socket, server_side=True)
@@ -477,6 +485,12 @@ def main():
         pass
     finally:
         server.server_close()
+        if server.live_relay_process.poll() is None:
+            server.live_relay_process.terminate()
+            try:
+                server.live_relay_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.live_relay_process.kill()
 
 
 if __name__ == "__main__":

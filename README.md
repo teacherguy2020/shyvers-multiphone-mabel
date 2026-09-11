@@ -1,10 +1,15 @@
 # Shyvers Multiphone Project
 
-Historical reconstruction and reversible modernization of a Shyvers Multiphone.
+## Related project
 
-This repository is the home for the Shyvers Multiphone/Mabel runtime, Mac
-bridge, Harmony integration, Pico credit trigger, sounds, wiki, and rendered
-project site.
+Shyvers Multiplayer has its own repository:
+
+<https://github.com/teacherguy2020/shyvers-multiphone-mabel>
+
+Keep Multiplayer-specific source and deployment files there. This project
+contains the Multiphone/Mabel runtime, Mac bridge, and Pico credit trigger.
+
+Historical reconstruction and reversible modernization of a Shyvers Multiphone.
 
 ## Project idea
 
@@ -18,26 +23,6 @@ coin → Multiphone → Mabel → Now Playing → jukebox queue → MPD/moOde �
 The Multiphone remains the customer interface, the nickel starts the transaction,
 Mabel acts as the central music operator, and the existing audio system provides
 the program audio.
-
-## A brief history
-
-The Shyvers Multiphone was designed as a coin-operated telephone music selector.
-Kenneth C. Shyvers' 1941 utility patent, US 2,264,911, describes a customer
-station that accepted payment, connected the caller to a central operator, and
-let the caller request a record from a catalog. The records were kept at a
-central studio, so the Multiphone was a short, paid request call—not a local
-jukebox operated directly by the customer.
-
-Multiple stations could share a request line, while the requested music played
-separately through the establishment's sound system. This project preserves
-that division: the antique Multiphone is the customer interface, Mabel is the
-operator, and Now Playing is the modern equivalent of the operator's queue and
-record library.
-
-Shyvers did not allow the lady operators to use their real names on the line.
-Several chose the name Mabel, which is why this project uses Mabel for its
-modern operator. See the [historical operating model](wiki/historical-operating-model.md)
-for the source-backed details and modern mapping.
 
 ## Wiki
 
@@ -57,11 +42,15 @@ an iPad on the same local network. The Seeburg wiki remains at
 
 ## Harmony Hub control
 
-`operator/harmony_hub.mjs` is a generic local WebSocket client for a user's
-Harmony Hub. It keeps a persistent connection, detects stale sockets with
+`operator/harmony_hub.mjs` is a generic local WebSocket client for the Harmony
+Hub. It keeps a persistent connection, detects stale sockets with
 ping/pong, reconnects after disconnects, and retries failed requests. It does
-not assume a Denon receiver or ship a shared hub mapping. Generate your own
-local mapping using [`config/README.md`](config/README.md).
+not assume a Denon receiver; device and activity names come from the generated
+mapping files:
+
+- `config/harmony-mapping.md` — local human-readable names, IDs, and exact command strings;
+- `config/harmony-mapping.json` — local machine-readable mapping;
+- [`config/harmony-mapping.example.json`](config/harmony-mapping.example.json) — sanitized public structure.
 
 Examples:
 
@@ -93,7 +82,7 @@ The runtime exports `harmony_command(device_id, command, status)`,
 `harmony_press_many(device_id, command, count)`,
 `harmony_start_activity(activity_id)`, `harmony_get_config()`, and name-based
 variants for use by other local Node tools. The WebSocket host, port, domain,
-and hub ID must come from the user's own Harmony configuration.
+and hub ID come from the user's local Harmony configuration.
 
 Terminal Mabel uses `harmony_press_many()` to lower the Denon by 40
 `VolumeDown` presses rapidly during a call and restores the successfully sent presses
@@ -124,8 +113,7 @@ available as a fallback for existing protected local setups. Do not place the
 key in this project, shell history, or command examples.
 
 Omit `--number` for an interactive loop. Omit `--dry-run` only when ready to
-actually queue a selection. Set `NOW_PLAYING_MULTIPHONE_URL` to the API address
-used by your installation.
+actually queue a selection. Set `NOW_PLAYING_MULTIPHONE_URL` to the API address used by your installation.
 
 ## Mabel local bridge
 
@@ -144,21 +132,24 @@ python3 operator/mabel_console.py
 ```
 
 The service retrieves the Now Playing key from macOS Keychain and uses the
-existing Multiphone endpoint. OpenAI TTS provides the spoken prompt and
-confirmation by default, with macOS `say` retained as a fallback. Use
-`--tts macos --fallback-voice Samantha` to return to local speech.
+existing Multiphone endpoint. Legacy bridge callers can use OpenAI TTS, with
+macOS `say` retained as a fallback. During an active GPT-Live call, the bridge
+returns structured authoritative results with `suppressSpeech`; GPT-Live/Sage
+is the only conversational Mabel voice. Local phone, ambience, and footsteps
+effects remain local.
 
 The bridge listens on port `8788` and exposes `/shyvers/call`, `/shyvers/response`,
 `/shyvers/offscript`, `/shyvers/speak`, `/shyvers/end`, and `/health`.
 
-An iPad Shortcut can start a VIP/off-script Realtime call by POSTing to
-`/shyvers/start` on the Mac, or a normal numbered call by POSTing to
-`/shyvers/start-normal`. The bridge launches one Realtime process; a second
-request while Mabel is active returns HTTP 409. Both endpoints use the
-configured `--realtime-input` device (default `:0`), which currently maps to
-the SSL 2 at AVFoundation device `:0`. The bridge LaunchAgent must run as an
-interactive Aqua user-session process so endpoint-launched Realtime capture
-receives the same Core Audio signal as the terminal flow.
+An iPad Shortcut or the Pico can start a normal GPT-Live call by POSTing to
+`/shyvers/start-normal`. The bridge replaces any previous bridge-managed call
+before launching the new one. The normal Live defaults are full duplex, stream
+playback at 1.0x, Sage voice gain `1.78275`, +10 dB master gain, telephone EQ,
+and the `HIFI DSD` output device. Both the Live and legacy Realtime clients use
+the configured `--realtime-input` device (default `:0`), currently the SSL 2.
+The bridge LaunchAgent must run as an interactive Aqua user-session process so
+endpoint-launched capture receives the same Core Audio signal as the terminal
+flow.
 
 ## Mabel fixed-window microphone fallback
 
@@ -180,9 +171,33 @@ conversation model. It retries transient AVFoundation failures, accepts spoken
 numbers 1 through 170, and gives one retry prompt when it does not understand.
 Use `--seconds 5` for a longer capture or `--turns 1` for a single-turn test.
 
-## Mabel Realtime voice agent
+## Mabel Live and Realtime voice agents
 
-### iPad handset prototype
+### GPT-Live terminal and Pico path
+
+The current preferred Mac/Pico path is the GPT-Live/Sage client. Run this as
+one shell command when testing from a terminal:
+
+```sh
+node operator/mabel_live.mjs --duplex full --playback-mode stream --voice-speed 1.0 --gain 1.78275 --master-gain-db 10 --telephone-eq --output-device "HIFI DSD" --input :0
+```
+
+The Live client keeps number validation, confirmation, catalog facts, credits,
+queue state, Now Playing actions, and termination deterministic through the
+bridge. The bridge's structured result is fed back into the active Live
+session; local bridge TTS is suppressed, so GPT-Live/Sage is the only source of
+Mabel's spoken conversational voice. Ringback, office ambience, heels, and the
+hang-up click remain local effects. Live uses a native PCM player with a 1.5
+second startup FIFO, adaptive refill, 300–3400 Hz telephone EQ, and explicit
+CoreAudio routing to HIFI DSD. The `--gain` value affects Mabel's voice; the
+master gain affects the complete Live output bus.
+
+The Pico's normal trigger uses the same settings through
+`POST /shyvers/start-normal`. A new trigger terminates a previous bridge-managed
+call before starting the replacement. If output or capture wiring is changed,
+verify the running child command in `~/Library/Logs/mabel-service.log`.
+
+### iPad Live handset
 
 The iPad can now be the actual Mabel handset: Safari supplies the microphone
 and audio output, while the Mac keeps the permanent OpenAI key and proxies
@@ -194,24 +209,31 @@ python3 operator/mabel_service.py --voice nova
 python3 operator/mabel_web.py
 ```
 
-On the iPad, open `https://<Mac-LAN-IP>:8790/`, accept the local certificate
-warning, and pair the Bose speaker and microphone to the iPad. **Call Mabel**
-starts directly in VIP/off-script mode. **Call Normal Mabel** starts the regular
-Multiphone numbered-selection flow for testing the 170-position playlist.
-The VIP mode supports the bounded album, artist, playlist, mix, and now-playing
-actions. The permanent API key never enters the browser; the Mac mints a
-short-lived Realtime client secret instead.
+On the iPad, open `https://<Mac-LAN-IP>:8790/` and accept the local certificate
+warning. **Call Normal Mabel** is the browser GPT-Live path for numbered
+Multiphone calls. It uses the secure browser-to-Mac relay on port `8791`; the
+Mac keeps the permanent OpenAI key and forwards the Live session upstream.
+Safari plays the returned audio through the iPad's selected output, not the
+Mac's HIFI DSD. **Call Mabel** remains the legacy browser WebRTC Realtime/VIP
+path. **Text Mabel** remains the separate VIP text session.
+
+In either Live path, say **“go off-script”** or **“I'm a VIP”** to enter the
+bounded private music service. Album, artist, playlist, mix, and now-playing
+requests are sent to the bridge; GPT-Live speaks only the authoritative result.
 
 The same page also has **Text Mabel**. It starts a separate VIP text session;
 type messages in the chat panel and Mabel replies on-screen without requesting
 microphone permission or playing voice audio. Text sessions use the same bounded
 music tools and close after a successful album, artist, playlist, or mix action.
 
-This is separate from the older Mac-audio Realtime command below. Use one
-handset mode at a time so two Mabel sessions do not compete for the bridge.
+Use one handset mode at a time so two Mabel sessions do not compete for the
+bridge. The bridge will replace an older bridge-managed call if a new trigger
+arrives.
 
-For natural, low-latency conversation, use the Realtime agent instead of the
-fixed recording-window prototype. With `mabel_service.py` running, start:
+### Legacy Realtime agent
+
+For the unchanged production/legacy path, use the Realtime agent with
+`mabel_service.py` running:
 
 ```sh
 node operator/mabel_realtime.mjs --input :0
@@ -223,14 +245,9 @@ playback through the Mac's default output. The current Realtime voice is `sage`;
 fallback TTS, not Realtime. The model can only submit a validated number from 1
 through 170 in normal mode. Stop with Ctrl-C.
 
-The call also uses local effects in `sounds/`: `phone-ringback-answer-click.m4a`
-plays before the greeting, `high-heels-walk-2s.m4a` plays only after Realtime
-recognizes a valid numbered selection and before Mabel's response, and
-`phone-hangup-click.m4a` plays when the call ends. Conversational and off-script
-turns do not trigger the heels cue. Mabel's response waits until the effect is
-finished. Effects are played with `afplay`, serialized with Mabel's voice audio,
-and microphone input is suppressed while they play. Override the directory with
-`--sounds-dir /path/to/sounds`.
+The legacy call uses the same local assets in `sounds/`, but its audio behavior
+and routing remain unchanged. Do not use this path to test the GPT-Live relay
+or Live-specific HIFI DSD routing.
 
 Mabel's generated responses intentionally have no artificial output-token cap:
 small caps previously truncated otherwise complete audio. Cost is controlled by
@@ -254,7 +271,7 @@ The service result remains authoritative; only the phrasing varies.
 
 ### Off-script mode
 
-During a Realtime call, explicitly say **“go off script”** or **“I’m a VIP”** to
+During a Live or Realtime call, explicitly say **“go off script”** or **“I’m a VIP”** to
 unlock a bounded set of the existing Alexa-style music actions. Saying **“off
 script”** anywhere
 in an utterance unlocks the mode deterministically. Mabel acknowledges the
@@ -266,9 +283,10 @@ not receive unrestricted HTTP access. Numeric Multiphone requests continue to
 use the dedicated jukebox flow.
 
 If no number is recognized, Mabel gives a short retry prompt. After a successful
-numbered selection, Mabel announces the result, says a brief goodbye, and ends
-the call. An explicit “play it now” request remains a separate action when
-available; ordinary selections remain FIFO.
+numbered selection, Mabel announces the bridge-supplied result, says a brief
+goodbye, and ends the call. Live VIP actions are bounded to album, artist,
+playlist, mix, and now-playing requests; the model never receives unrestricted
+HTTP or shell access.
 
 See [operations and testing](site/operations-and-testing.html) for Keychain,
 audio-routing, deployment, and troubleshooting details.
@@ -280,7 +298,7 @@ currently used by the iPad voice and text handsets and enables the bounded
 music actions described above. The next design step is a Mac-side VIP action
 registry so Mabel can eventually coordinate named automations such as:
 
-- lighting scenes;
+- lighting scenes for Clem's Place or the listening room;
 - Harmony Hub activities;
 - audio/display ambience;
 - future room-specific devices and cleanup actions.
@@ -298,3 +316,10 @@ active session. VIP start remains LAN-only and must not be port-forwarded.
 - No antique hardware should be connected to mains power before documentation
   and electrical inspection.
 - Hardware assumptions remain hypotheses until the machine is examined.
+
+## Source note
+
+The initial wiki synthesis is based on Brian's Apple Notes entry **“Shyvers
+Multiphone Project”** in the `Jarvis` folder, captured September 2026. Historical
+claims should be verified against patents, photographs, service documentation,
+and the arriving machine.

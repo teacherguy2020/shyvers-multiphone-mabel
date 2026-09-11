@@ -5,6 +5,9 @@ __pycache__/
 # Local certificates and generated runtime state.
 state/*.pem
 state/mabel-song-facts.json
+state/
+
+.DS_Store
 
 # Pico device-only credentials.
 micropicoMultiphone/secrets.py

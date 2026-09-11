@@ -22,7 +22,8 @@ from mabel_voice import keychain_value, OPENAI_ACCOUNT, OPENAI_SERVICE
 
 SESSIONS = {}
 LOCK = threading.Lock()
-REALTIME_PROCESS = None
+START_LOCK = threading.Lock()
+MABEL_PROCESS = None
 LAST_CALL_STATE_FILE = os.environ.get(
     "MABEL_LAST_CALL_STATE_FILE",
     os.path.expanduser("~/.mabel_multiphone_state.json"),
@@ -36,6 +37,27 @@ CHOICE_CONFIRMATIONS = (
     "You got it! Number {number}, coming right up, thanks.",
     "Oh, I like that one! Number {number}, coming right up, thanks.",
 )
+
+
+def stop_mabel_process(process, reason):
+    """Stop a previous bridge-launched client before replacing it."""
+    if process is None or process.poll() is not None:
+        return True
+    pid = process.pid
+    print(f"Mabel: stopping previous client pid={pid} reason={reason}", flush=True)
+    try:
+        process.terminate()
+        process.wait(timeout=8)
+    except subprocess.TimeoutExpired:
+        print(f"Mabel: previous client pid={pid} did not exit; forcing termination", flush=True)
+        try:
+            process.kill()
+            process.wait(timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            return process.poll() is not None
+    except OSError:
+        return process.poll() is not None
+    return process.poll() is not None
 
 
 def load_last_call_time():
@@ -55,6 +77,48 @@ def save_last_call_time(timestamp):
     with open(temporary, "w", encoding="utf-8") as state_file:
         json.dump({"lastCompletedCallAt": timestamp}, state_file)
     os.replace(temporary, LAST_CALL_STATE_FILE)
+
+
+def run_harmony_volume(server, command, count, inter_press_ms):
+    """Run one bridge-owned volume operation without exposing credentials."""
+    process = subprocess.run(
+        [server.node_binary, server.harmony_volume_script,
+         "--command", command, "--count", str(count),
+         "--inter-press-ms", str(inter_press_ms)],
+        cwd=server.project_dir,
+        env=server.realtime_env,
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    if process.returncode != 0:
+        detail = process.stderr.strip() or process.stdout.strip() or f"exit {process.returncode}"
+        raise RuntimeError(detail)
+    payload = json.loads(process.stdout.strip().splitlines()[-1])
+    return int(payload.get("sent", 0))
+
+
+def restore_browser_live_volume(server, session):
+    duck_process = session.get("duckProcess")
+    sent = 0
+    if duck_process is not None:
+        try:
+            stdout, stderr = duck_process.communicate(timeout=45)
+            if duck_process.returncode == 0 and stdout.strip():
+                payload = json.loads(stdout.strip().splitlines()[-1])
+                sent = int(payload.get("sent", 0))
+            elif stderr.strip():
+                print(f"Mabel browser Live volume duck failed: {stderr.strip()}", flush=True)
+        except (subprocess.TimeoutExpired, ValueError, TypeError, OSError) as error:
+            print(f"Mabel browser Live volume duck result unavailable: {error}", flush=True)
+    if sent < 1:
+        return
+    try:
+        restored = run_harmony_volume(server, "VolumeUp", sent, 5)
+        print(f"Mabel browser Live volume restored sent={restored}", flush=True)
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError, TypeError, OSError) as error:
+        print(f"Mabel browser Live volume restore failed: {error}", flush=True)
 
 
 def find_node_binary():
@@ -402,6 +466,25 @@ class MabelHandler(BaseHTTPRequestHandler):
             with LOCK:
                 last_call_at = load_last_call_time()
                 SESSIONS[session_id] = {"station": station, "startedAt": now}
+            if data.get("duckVolume") is True:
+                try:
+                    duck_process = subprocess.Popen(
+                        [self.server.node_binary, self.server.harmony_volume_script,
+                         "--command", "VolumeDown", "--count", str(self.server.harmony_duck_steps),
+                         "--inter-press-ms", str(self.server.harmony_duck_inter_press_ms)],
+                        cwd=self.server.project_dir,
+                        env=self.server.realtime_env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    with LOCK:
+                        session = SESSIONS.get(session_id)
+                        if session is not None:
+                            session["duckProcess"] = duck_process
+                            session["duckRequested"] = True
+                except OSError as error:
+                    print(f"Mabel browser Live volume duck start failed: {error}", flush=True)
             seconds_since_last_call = None
             if last_call_at is not None and now >= last_call_at:
                 seconds_since_last_call = round(now - last_call_at)
@@ -421,26 +504,51 @@ class MabelHandler(BaseHTTPRequestHandler):
             # `/shyvers/start` is the VIP/off-script line; the explicit normal
             # route leaves off-script disabled so the numbered state machine
             # handles the call.
-            global REALTIME_PROCESS
+            global MABEL_PROCESS
             off_script = self.path == "/shyvers/start"
-            with LOCK:
-                if REALTIME_PROCESS is not None and REALTIME_PROCESS.poll() is None:
-                    return self.send_json(409, {"ok": False, "error": "Mabel is already running", "pid": REALTIME_PROCESS.pid})
-                REALTIME_PROCESS = None
-            try:
-                command = [self.server.node_binary, self.server.realtime_script,
-                           "--input", self.server.realtime_input]
-                if off_script:
-                    command.append("--off-script")
-                command.extend(("--mabel-url", f"http://127.0.0.1:{self.server.server_port}"))
-                process = subprocess.Popen(command, cwd=self.server.project_dir,
-                                           env=self.server.realtime_env)
-            except OSError as error:
-                return self.send_json(503, {"ok": False, "error": f"Could not start Mabel: {error}"})
-            with LOCK:
-                REALTIME_PROCESS = process
+            # Serialize replacement so two near-simultaneous triggers cannot
+            # both observe the old client and launch overlapping calls.
+            with START_LOCK:
+                with LOCK:
+                    previous_process = MABEL_PROCESS
+                    MABEL_PROCESS = None
+                replaced_pid = previous_process.pid if previous_process is not None else None
+                if not stop_mabel_process(previous_process, f"new {'off-script' if off_script else 'normal'} call"):
+                    with LOCK:
+                        MABEL_PROCESS = previous_process
+                    return self.send_json(503, {
+                        "ok": False,
+                        "error": f"Could not terminate previous Mabel client (pid {replaced_pid})",
+                        "pid": replaced_pid,
+                    })
+                try:
+                    client_name = "realtime" if off_script else self.server.normal_client
+                    script = self.server.realtime_script if client_name == "realtime" else self.server.live_script
+                    command = [self.server.node_binary, script,
+                               "--input", self.server.realtime_input]
+                    if off_script:
+                        command.append("--off-script")
+                    elif client_name == "live":
+                        command.extend(("--duplex", self.server.live_duplex,
+                                        "--playback-mode", "stream"))
+                        command.extend(("--voice-speed", str(self.server.live_voice_speed)))
+                        command.extend(("--gain", str(self.server.live_voice_gain)))
+                        command.extend(("--master-gain-db", str(self.server.live_master_gain_db)))
+                        if self.server.live_telephone_eq:
+                            command.append("--telephone-eq")
+                        if self.server.live_output_device:
+                            command.extend(("--output-device", self.server.live_output_device))
+                    command.extend(("--mabel-url", f"http://127.0.0.1:{self.server.server_port}"))
+                    process = subprocess.Popen(command, cwd=self.server.project_dir,
+                                               env=self.server.realtime_env,
+                                               start_new_session=True)
+                except OSError as error:
+                    return self.send_json(503, {"ok": False, "error": f"Could not start Mabel: {error}"})
+                with LOCK:
+                    MABEL_PROCESS = process
             return self.send_json(202, {"ok": True, "mode": "off-script" if off_script else "normal",
-                                        "pid": process.pid, "state": "starting"})
+                                        "client": client_name, "pid": process.pid, "replacedPid": replaced_pid,
+                                        "state": "starting"})
 
         if self.path == "/shyvers/response":
             session_id = str(data.get("sessionId") or "")
@@ -460,7 +568,17 @@ class MabelHandler(BaseHTTPRequestHandler):
                 result = submit(number, endpoint=self.server.now_playing_endpoint,
                                 track_key=self.server.track_key, defer_playback=defer_playback)
             except RuntimeError as error:
-                speak("I am sorry, the central station could not be reached.", self.server)
+                print(
+                    f"Mabel selection backend failure; speaking fallback "
+                    f"endpoint={self.server.now_playing_endpoint} error={error}",
+                    flush=True,
+                )
+                # Live clients own the conversational voice. They request
+                # structured results with suppressSpeech and will feed this
+                # authoritative error back to GPT-Live/Sage. Keep the local
+                # fallback for legacy callers that did not suppress speech.
+                if not suppress_speech:
+                    speak("I am sorry, the central station could not be reached.", self.server)
                 return self.send_json(502, {"ok": False, "error": str(error)})
             if result.get("ok"):
                 confirmation = random.choice(CHOICE_CONFIRMATIONS).format(number=number)
@@ -561,6 +679,10 @@ class MabelHandler(BaseHTTPRequestHandler):
         if self.path == "/shyvers/end":
             session_id = str(data.get("sessionId") or "")
             with LOCK:
+                session = SESSIONS.get(session_id)
+            if session and session.get("duckRequested"):
+                restore_browser_live_volume(self.server, session)
+            with LOCK:
                 SESSIONS.pop(session_id, None)
                 save_last_call_time(time.time())
             return self.send_json(200, {"ok": True})
@@ -579,6 +701,27 @@ def main():
     parser.add_argument("--tts", choices=("openai", "macos"), default="openai")
     parser.add_argument("--realtime-input", default=os.environ.get("MABEL_REALTIME_INPUT", ":0"),
                         help="AVFoundation input selector for iPad-started Realtime calls")
+    parser.add_argument("--normal-client", choices=("live", "realtime"),
+                        default=os.environ.get("MABEL_NORMAL_CLIENT", "live"),
+                        help="Client used by /shyvers/start-normal (default: live)")
+    parser.add_argument("--live-duplex", choices=("half", "full", "hybrid"),
+                        default=os.environ.get("MABEL_LIVE_DUPLEX", "full"),
+                        help="Duplex mode for the Live normal client (default: full)")
+    parser.add_argument("--live-voice-speed", type=float,
+                        default=float(os.environ.get("MABEL_LIVE_VOICE_SPEED", "1.0")),
+                        help="Local Live PCM playback speed (default: 1.0; delivery pace comes from the voice prompt)")
+    parser.add_argument("--live-output-device",
+                        default=os.environ.get("MABEL_LIVE_OUTPUT_DEVICE", "HIFI DSD"),
+                        help="CoreAudio output device for Live normal calls")
+    parser.add_argument("--live-telephone-eq", choices=("true", "false"),
+                        default=os.environ.get("MABEL_LIVE_TELEPHONE_EQ", "true"),
+                        help="Enable the Live telephone EQ (default: true)")
+    parser.add_argument("--live-voice-gain", type=float,
+                        default=float(os.environ.get("MABEL_LIVE_GAIN", "1.78275")),
+                        help="Normal Live voice gain (default: 1.78275, +1.5 dB over 1.5; use --gain 1.0 for clean-path diagnostics)")
+    parser.add_argument("--live-master-gain-db", type=float,
+                        default=float(os.environ.get("MABEL_MASTER_GAIN_DB", "10")),
+                        help="Master gain applied to all normal Live HIFI DSD output (default: +10 dB)")
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), MabelHandler)
     server.now_playing_endpoint = args.now_playing_url
@@ -592,6 +735,17 @@ def main():
     server.tts = args.tts
     server.project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     server.realtime_script = os.path.join(server.project_dir, "operator", "mabel_realtime.mjs")
+    server.live_script = os.path.join(server.project_dir, "operator", "mabel_live.mjs")
+    server.harmony_volume_script = os.path.join(server.project_dir, "operator", "harmony_volume.mjs")
+    server.harmony_duck_steps = 40
+    server.harmony_duck_inter_press_ms = 0
+    server.normal_client = args.normal_client
+    server.live_duplex = args.live_duplex
+    server.live_voice_speed = max(1.0, args.live_voice_speed)
+    server.live_output_device = args.live_output_device
+    server.live_telephone_eq = args.live_telephone_eq == "true"
+    server.live_voice_gain = max(0.0, args.live_voice_gain)
+    server.live_master_gain_db = args.live_master_gain_db
     server.realtime_input = args.realtime_input
     server.node_binary = find_node_binary()
     server.realtime_env = realtime_environment()

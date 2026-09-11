@@ -5,17 +5,18 @@
 <div class="layout"><nav><strong>Wiki</strong><ul><li><a href="catalog-and-now-playing.html">Catalog And Now Playing</a></li><li><a href="hardware-examination.html">Hardware Examination</a></li><li><a href="historical-operating-model.html">Historical Operating Model</a></li><li><a href="mabel-software.html">Mabel Software</a></li><li><a href="open-questions.html">Open Questions</a></li><li><a href="operations-and-testing.html">Operations And Testing</a></li><li><a href="project-overview.html">Project Overview</a></li></ul><p><a href="../README.md">Project README</a></p></nav><main><h1>Mabel and software architecture</h1>
 <h2>Current role</h2>
 <p>Mabel is the modern central operator and record-room attendant for the Shyvers</p>
-<p>Multiphone at Clem's Place in Seattle. She is a 22-year-old 1940s telephone</p>
-<p>operator and record spinner: brisk, urgent, bright, lightly sassy, playful, and</p>
-<p>professionally demure. The telephone-era style is flavor, not a switchboard</p>
-<p>simulation. The caller is already connected; Mabel retrieves a real record from</p>
-<p>the Multiphone library.</p>
-<p>She speaks American English only and uses intelligible 1940s vernacular. Her</p>
-<p>delivery is currently about 10% faster than ordinary conversation, while</p>
-<p>confirmation digits play at 1.2x so they sound like a quick operator exchange</p>
-<p>rather than slow, robotic recitation. Affectionate forms of</p>
-<p>address—honey, sugar, sweetheart, doll, sport, dear, kiddo, boss, champ, and</p>
-<p>similar terms—are occasional seasoning, not a feature of every line.</p>
+<p>Multiphone at Clem's Place in Seattle. GPT-Live presents her as a young 1940s</p>
+<p>telephone operator and record spinner: brisk, bright, lightly sassy, playful,</p>
+<p>and professionally demure. The telephone-era style is flavor, not a</p>
+<p>switchboard simulation. The caller is already connected; Mabel retrieves a</p>
+<p>real record from the Multiphone library.</p>
+<p>She speaks American English only and uses intelligible 1940s vernacular. The</p>
+<p>Live path uses Sage with a youthful, light, high-register telephone timbre,</p>
+<p>slightly nasal and forward, at a naturally brisk but intelligible pace. The</p>
+<p>local PCM playback speed is 1.0x to avoid outrunning the Live stream.</p>
+<p>Affectionate forms of address—honey, sugar, sweetheart, doll, sport, dear,</p>
+<p>kiddo, boss, champ, and similar terms—are occasional seasoning, not a feature</p>
+<p>of every line.</p>
 <p>Mabel must say <strong>record</strong>, <strong>song</strong>, or <strong>tune</strong>, never “selection.” She must</p>
 <p>never say “dialing,” “connecting,” “transferring,” “routing,” or “putting you</p>
 <p>through.” Clem's Place is the direct song-line destination/bar; when she says</p>
@@ -30,11 +31,11 @@ Mac Mabel bridge :8788
 
              ↓
 
-OpenAI Realtime or Responses session
+GPT-Live/Sage or legacy Realtime/Responses session
 
        ├─ SSL 2 / browser microphone input
 
-       ├─ generated Mabel audio
+       ├─ Mac native PCM player or iPad Web Audio output
 
        └─ bounded, validated music actions
 
@@ -49,7 +50,11 @@ MPD/moOde queue and room playback
 </code></pre>
 <p>The Mac owns the OpenAI credential and session orchestration. Now Playing owns</p>
 <p>catalog resolution, durable jukebox state, queue mutation, playback priority,</p>
-<p>and MPD state. Mabel never receives unrestricted shell, HTTP, or MPD access.</p>
+<p>and MPD state. The bridge remains authoritative for every business result;</p>
+<p>GPT-Live only speaks structured results supplied by it. During Live calls the</p>
+<p>bridge suppresses its local TTS, leaving GPT-Live/Sage as the only</p>
+<p>conversational Mabel voice. Mabel never receives unrestricted shell, HTTP, or</p>
+<p>MPD access.</p>
 <h2>Local services</h2>
 <p><code>operator/mabel_service.py</code> is the local bridge. Its current routes are:</p>
 <table><tr><th>Route</th><th>Purpose</th></tr>
@@ -58,8 +63,8 @@ MPD/moOde queue and room playback
 <tr><td><code>POST /shyvers/surprise</code></td><td>Choose a real numbered record privately for a surprise request.</td></tr>
 <table><tr><th><code>POST /shyvers/start-song</code></th><th>Start a previously reserved MPD song after the heels handoff.</th></tr>
 <tr><td><code>POST /shyvers/offscript</code></td><td>Execute one bounded VIP music or now-playing action.</td></tr>
-<tr><td><code>POST /shyvers/start</code></td><td>Launch one iPad-Shortcut off-script Realtime process.</td></tr>
-<tr><td><code>POST /shyvers/start-normal</code></td><td>Launch one iPad-Shortcut normal numbered Realtime process.</td></tr>
+<tr><td><code>POST /shyvers/start</code></td><td>Launch the legacy iPad-Shortcut off-script Realtime process.</td></tr>
+<tr><td><code>POST /shyvers/start-normal</code></td><td>Launch the normal GPT-Live process with replacement semantics.</td></tr>
 <table><tr><th><code>POST /shyvers/speak</code></th><th>Speak a bridge-generated message through fallback TTS.</th></tr>
 <tr><td><code>POST /shyvers/end</code></td><td>Release a session.</td></tr>
 <tr><td><code>GET /health</code></td><td>Bridge health check.</td></tr>
@@ -69,18 +74,38 @@ MPD/moOde queue and room playback
 <p>has a <code>curl</code> retry path for transient launchd/network-route failures and avoids</p>
 <p>redundant playback-start requests when Now Playing already reports playback.</p>
 <p>The bridge persists the completion time of the last call in the user's local</p>
-<p>Mabel state file. If a new call begins within five minutes, the Realtime client</p>
+<p>Mabel state file. If a new call begins within five minutes, the active client</p>
 <p>uses one of five brief “back so soon?” greetings. The elapsed time is calculated locally;</p>
 <p>it is not sent to the model as a separate lookup or exposed as a timestamp.</p>
-<p>The bridge and handset have persistent user LaunchAgents. The Mabel bridge is
-configured as an interactive Aqua-session job so endpoint-launched capture
-receives the SSL 2 signal just as the terminal process does:</p>
+<p>The bridge and handset have persistent user LaunchAgents. The Mabel bridge is</p>
+<p>configured as an interactive Aqua-session job so endpoint-launched capture</p>
+<p>receives the SSL 2 signal just as the terminal process does:</p>
 <ul>
-<li>a user-specific Mabel bridge LaunchAgent on <code>127.0.0.1:8788</code>;</li>
-<li>a user-specific Mabel handset LaunchAgent on HTTPS port <code>8790</code>.</li>
+<li><code>com.brianwis.mabel-service</code> on <code>127.0.0.1:8788</code>;</li>
+<li><code>com.brianwis.mabel-handset</code> on HTTPS port <code>8790</code>.</li>
 </ul>
-<p>After a reboot, verify <code>/health</code> on both services before testing. The Realtime</p>
-<p>client still depends on the bridge being available first.</p>
+<p>After a reboot, verify <code>/health</code> on both services before testing. Both Live and</p>
+<p>Realtime clients depend on the bridge being available first.</p>
+<h2>GPT-Live normal line</h2>
+<p><code>operator/mabel_live.mjs</code> is the preferred Mac/Pico normal-line client. The</p>
+<p>bridge starts it for <code>POST /shyvers/start-normal</code> with full duplex, stream</p>
+<p>playback at 1.0x, Sage voice gain <code>1.78275</code>, +10 dB master gain, telephone EQ,</p>
+<p>and the <code>HIFI DSD</code> output device. The current one-line terminal equivalent is:</p>
+<pre><code>
+node operator/mabel_live.mjs --duplex full --playback-mode stream --voice-speed 1.0 --gain 1.78275 --master-gain-db 10 --telephone-eq --output-device &quot;HIFI DSD&quot; --input :0
+
+</code></pre>
+<p>The native player applies a 300–3400 Hz telephone band-pass, explicit CoreAudio</p>
+<p>device routing, a 1.5-second startup FIFO, adaptive refill, and zero-fill</p>
+<p>during rebuffering. Ringback, office ambience, heels, and hang-up sounds stay</p>
+<p>local. Live response audio and all bridge-generated business replies are</p>
+<p>spoken by GPT-Live/Sage; the bridge uses structured results and</p>
+<p><code>suppressSpeech</code> rather than local TTS during the active call.</p>
+<p>The normal state machine remains deterministic: number recognition and</p>
+<p>confirmation, bridge validation, credits, catalog facts, queue state, deferred</p>
+<p>playback, heels, title/artist announcement, and termination are controlled by</p>
+<p>the local application. A new bridge-managed call terminates the previous one</p>
+<p>before starting.</p>
 <h2>Authoritative Mac terminal flow</h2>
 <p><code>operator/mabel_realtime.mjs</code> is the reference experience for normal calls.</p>
 <p>Start it with:</p>
@@ -88,8 +113,9 @@ receives the SSL 2 signal just as the terminal process does:</p>
 node operator/mabel_realtime.mjs --input :0
 
 </code></pre>
-<p>The current input is an SSL 2 at AVFoundation device <code>:0</code>. The client uses the</p>
-<p>GA Realtime WebSocket API with 24 kHz PCM input/output and the <code>sage</code> voice.</p>
+<p>The current input is an SSL 2 at AVFoundation device <code>:0</code>. The client converts</p>
+<p>the capture stream to mono 24 kHz PCM and uses the GA Realtime WebSocket API</p>
+<p>with 24 kHz PCM input/output and the <code>sage</code> voice.</p>
 <p>Mabel response PCM is buffered into temporary WAV files and played locally with</p>
 <p>macOS <code>afplay</code>; this is more reliable than leaving a raw streaming player open</p>
 <p>between turns. The OpenAI key is read from Keychain, never from the command</p>
@@ -166,6 +192,11 @@ That’s number one-five-eight?
 <p>briefly embarrassed and then repeated in the same digit-by-digit form; no heels</p>
 <p>or playback begin before confirmation. Short VAD fragments such as “what’s,”</p>
 <p>“wait,” or “hold on” are held without starting another model reply.</p>
+<p>If the completed caller utterance contains neither confirmation nor correction,</p>
+<p>the local client repeats the exact pending-number confirmation after about 1.8</p>
+<p>seconds. This application-generated retry keeps the digits authoritative and</p>
+<p>gives the caller another chance to answer without the call stalling silently.</p>
+<p>The iPad Live client follows the same rule.</p>
 <p>Numbers above 170 are rejected before confirmation with a redirect to a valid</p>
 <p>number from 1 through 170. They are never silently reduced to a nearby record.</p>
 <p>Once a number is confirmed, the microphone stays closed until the call ends.</p>
@@ -260,8 +291,8 @@ flattered acknowledgment
 <p>perform external song lookups or add outside biographical, chart, popularity,</p>
 <p>or musical facts.</p>
 <h2>VIP and off-script music</h2>
-<p>The caller can say “off script” or “I'm a VIP” during a terminal call, or start</p>
-<p>directly in VIP mode from the iPad. Mabel acknowledges the private line briefly and asks</p>
+<p>The caller can say “off script” or “I'm a VIP” during a Live or terminal call, or</p>
+<p>start directly in VIP mode from the iPad. Mabel acknowledges the private line briefly and asks</p>
 <p>“Whaddya wanna hear?” without explaining the categories to an advanced caller.</p>
 <p>The bounded VIP actions are:</p>
 <ul>
@@ -289,20 +320,22 @@ https://&lt;Mac-LAN-IP&gt;:8790/
 </code></pre>
 <p>The page provides three controls:</p>
 <ul>
-<li><strong>Call Mabel</strong>: VIP/off-script voice mode;</li>
-<li><strong>Call Normal Mabel</strong>: normal numbered mode for testing the 1–170 playlist;</li>
+<li><strong>Call Mabel</strong>: legacy browser WebRTC Realtime/VIP voice mode;</li>
+<li><strong>Call Normal Mabel</strong>: browser GPT-Live normal numbered mode;</li>
 <li><strong>Text Mabel</strong>: VIP text mode.</li>
 </ul>
 <p>For voice calls, Safari owns the iPad microphone and speaker, so a Bose or</p>
-<p>Bluetooth microphone/speaker can travel with the caller. The Mac mints a</p>
-<p>short-lived Realtime client secret and proxies bounded music actions; the</p>
-<p>permanent OpenAI key never enters the browser. The VIP greeting is deterministic:</p>
+<p>Bluetooth microphone/speaker can travel with the caller. The normal Live button</p>
+<p>connects to the secure WebSocket relay on port <code>8791</code>; the Mac keeps the</p>
+<p>permanent OpenAI key and proxies the GPT-Live session. The legacy Realtime VIP</p>
+<p>button uses the browser WebRTC client and short-lived Realtime credentials.</p>
+<p>The permanent OpenAI key never enters the browser. The VIP greeting is deterministic:</p>
 <blockquote>“Thanks for calling the VIP line—Mabel here at Multiphone! Whaddya wanna hear?”</blockquote>
-<p>VIP calls skip the public ringback. Normal web calls use the normal greeting,</p>
+<p>VIP calls skip the public ringback. Normal Live web calls use the normal greeting,</p>
 <p>ringback, number confirmation, heels, record result, goodbye, and hang-up</p>
 <p>behavior as far as the browser audio path permits. The terminal remains the</p>
 <p>authoritative normal-mode reference; the web normal path is a useful secondary</p>
-<p>test surface because Safari has stricter audio-playback and WebRTC timing rules.</p>
+<p>test surface because Safari has stricter audio-playback and Web Audio timing rules.</p>
 <p>Text Mabel uses a server-side Responses API conversation. It does not request</p>
 <p>microphone permission or play voice audio; typed messages and Mabel's replies</p>
 <p>appear in the page. It uses the same bounded VIP music tools and closes after a</p>
@@ -314,18 +347,23 @@ https://&lt;Mac-LAN-IP&gt;:8790/
 <p>The terminal client uses these local assets in <code>sounds/</code>:</p>
 <table><tr><th>File</th><th>Use</th><th>Current level</th></tr>
 <tr><td><code>phone-ringback-answer-click.m4a</code></td><td>Public-line ringback and answer</td><td>12.5%</td></tr>
-<tr><td><code>high-heels-walk-2s.m4a</code></td><td>Mabel walking to retrieve a record</td><td>25%</td></tr>
-<tr><td><code>phone-hangup-click.m4a</code></td><td>Call termination</td><td>50%</td></tr>
-<table><tr><th><code>shyvers-office-ambiance.mp3</code></th><th>Quiet looping room bed</th><th>8%</th></tr>
+<tr><td><code>high-heels-walk-2s.m4a</code></td><td>Mabel walking to retrieve a record</td><td>17.5%</td></tr>
+<tr><td><code>phone-hangup-click.m4a</code></td><td>Call termination</td><td>37.5%</td></tr>
+<table><tr><th><code>shyvers-office-ambiance.mp3</code></th><th>Quiet looping room bed</th><th>6.4%</th></tr>
 <p>The office bed suggests a busy room of operators and loops beneath normal calls;</p>
 <p>it stops before the hang-up click. VIP calls skip the public ringback but still</p>
-<p>use the call's other applicable effects. Mabel's voice plays at 1.1x and</p>
-<p>confirmation responses at 1.2x. Effects retain their natural speed. The</p>
-<p>terminal ducks the Denon with 40 rapid <code>VolumeDown</code> presses at 0 ms spacing,</p>
-<p>then restores the exact successfully sent count at 5 ms spacing, beginning</p>
-<p>four seconds after final wrap-up starts; shutdown restoration remains the</p>
-<p>fallback.</p>
-<h3>Realtime cost controls</h3>
+<p>use the call's other applicable effects. The preferred Live path keeps local</p>
+<p>PCM playback at 1.0x, uses a 1.5-second startup FIFO with adaptive refill, and</p>
+<p>applies a 300–3400 Hz telephone band-pass before routing the complete Mac</p>
+<p>output to HIFI DSD. Live voice gain is <code>1.78275</code>; the current master output</p>
+<p>gain is +10 dB. Effects routed by Live use the same HIFI DSD output and retain</p>
+<p>their natural speed.</p>
+<p>The terminal Live client ducks the Denon with 40 rapid <code>VolumeDown</code> presses at</p>
+<p>0 ms spacing, then restores the exact successfully sent count at 5 ms spacing;</p>
+<p>shutdown waits for restoration. Browser Live calls request the same bridge-owned</p>
+<p>ducking and restore it through <code>/shyvers/end</code>. The iPad's actual audio remains</p>
+<p>on its selected Safari output and does not pass through HIFI DSD.</p>
+<h3>Live and Realtime cost controls</h3>
 <p>The client deliberately leaves <code>max_output_tokens</code> unset. Artificially small</p>
 <p>caps previously cut generated audio off mid-sentence. Affordability comes from</p>
 <p>keeping number parsing, confirmation state, queueing, playback handoff, and</p>
@@ -334,21 +372,22 @@ https://&lt;Mac-LAN-IP&gt;:8790/
 <p>personality-rich phrasing, while code remains authoritative for numbers,</p>
 <p>catalog facts, queue positions, and service results. Stable tone and safety</p>
 <p>rules live in the session instructions so they can benefit from cached input.</p>
-<p>At shutdown, the terminal prints the aggregate usage reported by Realtime,</p>
+<p>At shutdown, the terminal prints the aggregate usage reported by Live or Realtime,</p>
 <p>including response count, input/output/total tokens, cached input tokens, and</p>
 <p>audio-token subtotals when the API supplies them.</p>
-<p>During recent audio debugging, disabling heels, SoundSource processing, and</p>
-<p>alternate <code>ffplay</code> playback did not resolve truncation; removing the explicit</p>
-<p>output-token caps did. Keep <code>afplay</code> as the active player unless new evidence</p>
-<p>shows a regression. The optional <code>--footsteps off</code> flag remains useful for</p>
+<p>During recent audio debugging, Live FIFO starvation caused audible gaps while</p>
+<p>PCM invariants remained clean. The native player now uses a larger startup FIFO,</p>
+<p>adaptive refill, and zero-fill during rebuffering so delayed data cannot become</p>
+<p>stale or buzzing audio. The optional <code>--footsteps off</code> flag remains useful for</p>
 <p>isolating future tests.</p>
 <p>All local effects and voice playback use a serialized audio path. Microphone</p>
 <p>input is suppressed during Mabel's speech and effects to prevent SoundSource,</p>
-<p>Bose, or other routing from feeding Mabel back into OpenAI. <code>afplay</code> operations</p>
-<p>have timeouts and shutdown cleanup so a stuck sound cannot strand FFmpeg capture</p>
-<p>or prevent a later call from opening its microphone. Use <code>--sounds-dir</code> to point</p>
-<p>the client at another asset directory and <code>--ambience-volume</code> to adjust the</p>
-<p>office bed.</p>
+<p>Bose, or other routing from feeding Mabel back into OpenAI. Live effect playback</p>
+<p>uses FFmpeg AudioToolbox with name-based output-device selection; the native</p>
+<p>voice player uses the same HIFI DSD device. Effect operations have timeouts and</p>
+<p>shutdown cleanup so a stuck sound cannot strand capture or prevent a later call</p>
+<p>from opening its microphone. Use <code>--sounds-dir</code> to point the client at another</p>
+<p>asset directory and <code>--ambience-volume</code> to adjust the office bed.</p>
 <p>When the terminal call starts, Mabel ducks the Denon AVR4520CI by 40 discrete</p>
 <p><code>VolumeDown</code> presses rapidly through the generic Harmony Hub client. The WebSocket</p>
 <p>client reconnects or retries if needed, and the number of successfully sent</p>
@@ -391,5 +430,6 @@ python3 operator/mabel_service.py --voice nova
 <p>moOde playlist can map that position to digital duplicate metadata and artwork</p>
 <p>for bar TVs. The mechanical selection switches remain purely physical; Now</p>
 <p>Playing must not attempt to control them.</p>
+<p>_Last updated: 2026-09-11_</p>
 </table></main></div>
 </body></html>

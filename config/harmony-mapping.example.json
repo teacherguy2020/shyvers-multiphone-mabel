@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "YYYY-MM-DDTHH:MM:SSZ",
+  "source": "local Harmony export",
+  "hub": {
+    "id": "YOUR_HARMONY_HUB_ID",
+    "host": "HARMONY_HUB_HOST",
+    "port": 8088,
+    "domain": "svcs.myharmony.com",
+    "websocketUrl": "ws://HARMONY_HUB_HOST:8088/?domain=svcs.myharmony.com&hubId=YOUR_HARMONY_HUB_ID"
+  },
+  "devices": [
+    {
+      "id": "YOUR_DEVICE_ID",
+      "name": "Your receiver",
+      "manufacturer": "Manufacturer",
+      "type": "Audio/Video receiver",
+      "commands": [
+        {
+          "command": "VolumeDown",
+          "name": "VolumeDown",
+          "label": "Volume Down",
+          "type": "IRCommand",
+          "deviceId": "YOUR_DEVICE_ID"
+        },
+        {
+          "command": "VolumeUp",
+          "name": "VolumeUp",
+          "label": "Volume Up",
+          "type": "IRCommand",
+          "deviceId": "YOUR_DEVICE_ID"
+        }
+      ]
+    }
+  ],
+  "activities": [
+    {
+      "id": "YOUR_ACTIVITY_ID",
+      "name": "Your music activity",
+      "order": 0,
+      "type": "VirtualCdMulti",
+      "suggestedDisplay": "Your music activity",
+      "deviceIds": ["YOUR_DEVICE_ID"]
+    }
+  ]
+}
