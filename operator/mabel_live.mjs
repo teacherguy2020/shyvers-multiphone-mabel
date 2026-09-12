@@ -141,6 +141,10 @@ let lastOutputDiagnosticAt = 0;
 let transcript = '';
 let transcriptTimer;
 let confirmationRetryTimer;
+let confirmationRetryFallbackTimer;
+let confirmationResponsePending = false;
+let confirmationResponseAudioStarted = false;
+let staleLiveAudioDiscardLogged = false;
 let shutdownTimer;
 let finalResponseTimer;
 let finalResponseSafetyTimer;
@@ -156,6 +160,7 @@ let overlapMs = 0;
 let lastInputActivityAt = Date.now();
 let duckResult = { sent: 0 };
 let duckPromise = Promise.resolve();
+let volumeRestorePromise = null;
 let shutdownPromise = null;
 let cleanupPromise = null;
 let inputFrames = 0;
@@ -434,21 +439,46 @@ const confirmationLeadIns = [
   'Before I pull that one from the cabinet, just confirming',
 ];
 let confirmationStyleIndex = 0;
+function scheduleConfirmationRetry(number, waitMs = 1800) {
+  clearTimeout(confirmationRetryTimer);
+  confirmationRetryTimer = setTimeout(() => {
+    confirmationRetryTimer = null;
+    if (closing || !awaitingConfirmation || pendingNumber !== number) return;
+    log('confirmation retry', { number, waitMs });
+    requestConfirmation(number);
+  }, waitMs);
+  confirmationRetryTimer.unref();
+}
+function armConfirmationRetryFallback(number) {
+  const forceAt = Date.now() + 10000;
+  const check = () => {
+    if (closing || !awaitingConfirmation || pendingNumber !== number) return;
+    if (Date.now() < forceAt && (confirmationResponsePending || outputPlaying)) {
+      confirmationRetryFallbackTimer = setTimeout(check, 500);
+      confirmationRetryFallbackTimer.unref();
+      return;
+    }
+    confirmationResponsePending = false;
+    confirmationResponseAudioStarted = false;
+    scheduleConfirmationRetry(number);
+  };
+  confirmationRetryFallbackTimer = setTimeout(check, 10000);
+  confirmationRetryFallbackTimer.unref();
+}
 function requestConfirmation(number) {
   clearTimeout(confirmationRetryTimer);
   confirmationRetryTimer = null;
+  clearTimeout(confirmationRetryFallbackTimer);
+  confirmationRetryFallbackTimer = null;
+  confirmationResponsePending = true;
+  confirmationResponseAudioStarted = false;
   const spokenDigits = confirmationDigits(number);
   const leadIn = confirmationLeadIns[confirmationStyleIndex % confirmationLeadIns.length];
   confirmationStyleIndex += 1;
   log('confirmation requested', { number, spokenDigits, leadIn, questionIntonation: 'high-rising-final-digit' });
-  announce(`The local application has supplied the exact confirmation. Say exactly: “${leadIn}, ${spokenDigits}?” MANDATORY: this must be an unmistakable yes-or-no question with a strong, clearly audible upward pitch rise on the final digit word ${spokenDigits.split(' ').at(-1)}. Do not use falling or level intonation; hold the rise through the end of that final digit and leave a brief beat afterward. Do not say any other number, do not substitute a digit, and do not add a second number.`);
-  confirmationRetryTimer = setTimeout(() => {
-    confirmationRetryTimer = null;
-    if (closing || !awaitingConfirmation || pendingNumber !== number) return;
-    log('confirmation retry', { number, waitMs: 1800 });
-    requestConfirmation(number);
-  }, 1800);
-  confirmationRetryTimer.unref();
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'response.cancel', event_id: `mabel_confirmation_cancel_${Date.now()}` }));
+  announce(`The local application has supplied the exact confirmation. Say one sentence only: “${leadIn}, ${spokenDigits}?” Say the digit words only once, at the end of the sentence. Do not repeat or lead with the digits, do not say “you said ${spokenDigits},” and do not add a second version of the number. MANDATORY: this must be an unmistakable yes-or-no question with a strong, clearly audible upward pitch rise on the final digit word ${spokenDigits.split(' ').at(-1)}. Do not use falling or level intonation; hold the rise through the end of that final digit and leave a brief beat afterward. Do not say any other number or substitute a digit.`);
+  armConfirmationRetryFallback(number);
 }
 function announce(content) {
   if (ws?.readyState !== WebSocket.OPEN || closing) return;
@@ -566,7 +596,11 @@ function setOutputPlaying(value) {
   if (value === outputPlaying) return;
   outputPlaying = value;
   if (value) { outputStartedAt = Date.now(); log('output started'); }
-  else { log('output drained', { outputMs: outputStartedAt ? Date.now() - outputStartedAt : null }); outputStartedAt = null; }
+  else {
+    log('output drained', { outputMs: outputStartedAt ? Date.now() - outputStartedAt : null });
+    outputStartedAt = null;
+    if (finalResponsePending && finalResponseAudioDoneAt !== null && !closing) startVolumeRestore('final response output drained');
+  }
 }
 function playPcm(pcm, generation) {
   if (generation !== playbackGeneration) return Promise.resolve();
@@ -672,6 +706,14 @@ function ensureNativeStream() {
   streamWriter = player.stdin;
 }
 function outputDelta(audio) {
+  if (selectionInProgress && !finalResponsePending) {
+    if (!staleLiveAudioDiscardLogged) {
+      staleLiveAudioDiscardLogged = true;
+      log('stale Live audio discarded during selection');
+    }
+    return;
+  }
+  if (confirmationResponsePending && awaitingConfirmation) confirmationResponseAudioStarted = true;
   if (!firstOutputLogged) { firstOutputLogged = true; log('first output audio', { latencyMs: liveStartedAt ? Date.now() - liveStartedAt : null }); }
   const receivedAt = Date.now();
   if (lastLiveAudioDeltaAt !== null) {
@@ -870,6 +912,11 @@ async function handleTranscript(text) {
     } else if (affirmative(clean)) {
       clearTimeout(confirmationRetryTimer);
       confirmationRetryTimer = null;
+      clearTimeout(confirmationRetryFallbackTimer);
+      confirmationRetryFallbackTimer = null;
+      confirmationResponsePending = false;
+      confirmationResponseAudioStarted = false;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'response.cancel', event_id: `mabel_selection_cancel_${Date.now()}` }));
       await submitSelection(pendingNumber);
     }
     else if (candidate !== null) {
@@ -897,7 +944,7 @@ function queueTranscriptDelta(delta) {
   }, 1200);
 }
 async function submitSelection(number) {
-  selectionInProgress = true; awaitingConfirmation = false;
+  selectionInProgress = true; awaitingConfirmation = false; staleLiveAudioDiscardLogged = false;
   const actionStarted = Date.now();
   try {
     const result = await post('/shyvers/response', {
@@ -930,7 +977,7 @@ async function submitSelection(number) {
     if (outcome.queuedBehindJukebox) {
       const totalJukeboxRecords = Number(outcome.jukeboxQueueLength) || 1;
       const spinsAway = Math.max(1, totalJukeboxRecords - 1);
-      finalInstruction += `Say that the record was added to the others waiting on your desk for Clem's Place and will be coming up in exactly ${spinsAway} spin${spinsAway === 1 ? '' : 's'} or so. Do not invent or change that number. `;
+      finalInstruction += `Say that the record was added to the others waiting on your desk for Clem's Place and will be coming up in ${spinsAway} spin${spinsAway === 1 ? '' : 's'} or so. Do not invent or change that number. `;
     } else if (outcome.playbackStarted) {
       finalInstruction += 'Say that the record started playing immediately. ';
     } else if (Number.isFinite(Number(outcome.queueLength))) {
@@ -938,7 +985,7 @@ async function submitSelection(number) {
     } else {
       finalInstruction += `Briefly summarize the supplied application result using only these facts: ${JSON.stringify(outcome)}. `;
     }
-    finalInstruction += 'Deliver this as one compact, uninterrupted paragraph with brisk continuous speech: do not insert long pauses between the supplied facts or clauses. Add at most one brief, natural, period-appropriate reaction; reactions should not be overly energetic. Then give a brief, natural period-appropriate goodbye of your choice that clearly ends the call and includes “bye” or “goodbye.” Do not use the same fixed goodbye every time. Deliver the goodbye as an ordinary spoken sentence at the same volume, pitch, register, and pace as the preceding sentence—do not suddenly get louder, faster, more emphatic, or more animated, and do not treat the final goodbye words as a punchline or flourish. Pronounce every word fully; do not compress, clip, or rush the final words. Use a calm sentence ending, not exclamatory emphasis. Do not ask another question; this is the final response and end the call after speaking.';
+    finalInstruction += 'Deliver the entire result, optional reaction, and goodbye as one compact, uninterrupted paragraph with brisk continuous speech: do not insert long pauses between the supplied facts or clauses. Add at most one brief, natural, period-appropriate reaction, but fold it directly into the surrounding sentence or clause with no pause before or after it; reactions should not be overly energetic and must not become a separate performance turn. Continue directly into a brief, natural period-appropriate goodbye of your choice in that same paragraph and same uninterrupted delivery; it must clearly end the call and include “bye” or “goodbye.” Do not use the same fixed goodbye every time. Deliver the goodbye as an ordinary spoken sentence at the same volume, pitch, register, and pace as the preceding sentence—do not suddenly get louder, faster, more emphatic, or more animated, and do not treat the final goodbye words as a punchline or flourish. Pronounce every word fully; do not compress, clip, or rush the final words. Use a calm sentence ending, not exclamatory emphasis. Do not ask another question; this is the final response and end the call after speaking.';
     armFinalResponseShutdown();
     announce(finalInstruction);
   } catch (error) {
@@ -953,10 +1000,15 @@ async function restoreVolume() {
   try { await harmony_press_many(harmonyVolumeDeviceId, 'VolumeUp', duckResult.sent, { client: harmonyClient, interPressMs: restoreInterPressMs }); log('volume restored', { sent: duckResult.sent, interPressMs: restoreInterPressMs }); }
   catch (error) { log('volume restore error', { error: error.message }); }
 }
+function startVolumeRestore(reason) {
+  if (volumeRestorePromise) return volumeRestorePromise;
+  log('starting volume restore', { reason });
+  volumeRestorePromise = restoreVolume().catch((error) => log('volume shutdown wait error', { error: error.message }));
+  return volumeRestorePromise;
+}
 function finishShutdown(code = 0) {
   if (shutdownPromise) return shutdownPromise;
-  shutdownPromise = restoreVolume()
-    .catch((error) => log('volume shutdown wait error', { error: error.message }))
+  shutdownPromise = startVolumeRestore('shutdown')
     .then(() => cleanup())
     .catch((error) => log('cleanup error', { error: error.message }))
     .finally(() => {
@@ -975,9 +1027,17 @@ function handleEvent(event) {
   } else if (event.type === 'session.output_audio.delta') outputDelta(event.delta);
   else if (event.type === 'session.output_audio.done' || event.type === 'response.output_audio.done' || event.type === 'response.audio.done') {
     completedAudioResponses += 1;
+    if (confirmationResponsePending && confirmationResponseAudioStarted && awaitingConfirmation) {
+      confirmationResponsePending = false;
+      confirmationResponseAudioStarted = false;
+      clearTimeout(confirmationRetryFallbackTimer);
+      confirmationRetryFallbackTimer = null;
+      scheduleConfirmationRetry(pendingNumber);
+    }
     if (finalResponsePending) {
       finalResponseAudioDoneAt = Date.now();
       log('final response audio complete', { responseNumber: completedAudioResponses });
+      if (!outputPlaying && finalResponsePending && !closing) startVolumeRestore('final response audio complete');
       scheduleFinalResponseClose();
     }
     if (!streamOutput) flushOutput();
@@ -1044,6 +1104,10 @@ function cleanup() {
   if (finalResponseTimer) clearTimeout(finalResponseTimer);
   if (finalResponseSafetyTimer) clearTimeout(finalResponseSafetyTimer);
   if (confirmationRetryTimer) clearTimeout(confirmationRetryTimer);
+  if (confirmationRetryFallbackTimer) clearTimeout(confirmationRetryFallbackTimer);
+  confirmationRetryFallbackTimer = null;
+  confirmationResponsePending = false;
+  confirmationResponseAudioStarted = false;
   if (responseFlushTimer) clearTimeout(responseFlushTimer);
   responseFlushTimer = null;
   if (responseMaxFlushTimer) clearTimeout(responseMaxFlushTimer);

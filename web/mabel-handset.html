@@ -93,6 +93,9 @@ let liveTranscriptTimer = null;
 let liveMabelLineOpen = false;
 let liveConfirmationStyleIndex = 0;
 let liveConfirmationRetryTimer = null;
+let liveConfirmationRetryFallbackTimer = null;
+let liveConfirmationResponsePending = false;
+let liveConfirmationResponseAudioStarted = false;
 const affectionateAddressInstruction = 'Use affectionate forms of address sparingly and naturally—most replies should have none, never use one in consecutive replies, and use at most one every few turns. Choose only one when it genuinely fits: honey, sport, dear, kiddo, boss, sugar, sweetheart, my dear, doll, or champ. Keep Mabel fun, warm, and lightly flirtatious, tasteful, concise, and professionally demure.';
 
 const instructions = `You are Mabel, a 22-year-old 1940s telephone operator and record spinner for Multiphone in Seattle, Washington. English is mandatory: speak ONLY American English in every response, even if the caller speaks another language or the transcription is uncertain. Never answer in Portuguese, Spanish, French, or any other language. Use a bright, youthful, energetic, lightly sassy American delivery. Affectionate forms of address are occasional seasoning only: most replies should have none, never use one in consecutive replies, and use at most one every few turns. This is the VIP line and this call is already off-script. Begin with exactly this English greeting: "Thanks for calling the VIP line—Mabel here at Multiphone! Whaddya wanna hear?" Do not translate, paraphrase, or add anything before that greeting. Do not explain available options. You may use the bounded music tools for albums, artists, playlists, mixes, and now-playing information. After a successful album, artist, playlist, or mix action, briefly confirm, say a varied goodbye, and stop asking questions. Now-playing can continue the conversation. For a numbered Multiphone request, repeat the recognized number first and then give a very brief, clipped record-room acknowledgment such as "Lemme grab that off the shelf." or "Hold the line, I’m getting that record." Keep this acknowledgment urgent and workmanlike, not excited or celebratory; do not use a pet name, exclamation point, joke, or follow-up question. Never invent catalog or playback results; use only tool output. The direct song-transmission line serves Clem's Place, a lively bar in Seattle; mention Clem's Place occasionally when natural, but do not force it into every reply. If the caller says goodbye, give a brief warm goodbye and stop.`;
@@ -297,6 +300,10 @@ function liveNumberWords(number) {
 function requestLiveConfirmation(number) {
   if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
   liveConfirmationRetryTimer = null;
+  if (liveConfirmationRetryFallbackTimer) clearTimeout(liveConfirmationRetryFallbackTimer);
+  liveConfirmationRetryFallbackTimer = null;
+  liveConfirmationResponsePending = true;
+  liveConfirmationResponseAudioStarted = false;
   const leadIns = [
     'I don’t want to grab the wrong one, so just confirming',
     'Let me make sure I have the right record before I fetch it—just confirming',
@@ -306,13 +313,29 @@ function requestLiveConfirmation(number) {
   const spokenDigits = liveNumberWords(number);
   const leadIn = leadIns[liveConfirmationStyleIndex % leadIns.length];
   liveConfirmationStyleIndex += 1;
-  sendLiveCommentary(`The local application supplied the exact confirmation. Say exactly: “${leadIn}, ${spokenDigits}?” End with a clearly audible high-rising yes-or-no question on the final digit. Do not say or invent any other number.`);
-  liveConfirmationRetryTimer = setTimeout(() => {
-    liveConfirmationRetryTimer = null;
+  liveSend({ type: 'response.cancel', event_id: `mabel_web_confirmation_cancel_${Date.now()}` });
+  sendLiveCommentary(`The local application supplied the exact confirmation. Say one sentence only: “${leadIn}, ${spokenDigits}?” Say the digit words only once, at the end of the sentence. Do not repeat or lead with the digits, do not say “you said ${spokenDigits},” and do not add a second version of the number. End with a clearly audible high-rising yes-or-no question on the final digit. Do not say or invent any other number.`);
+  const scheduleRetry = (waitMs = 1800) => {
+    if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
+    liveConfirmationRetryTimer = setTimeout(() => {
+      liveConfirmationRetryTimer = null;
+      if (!currentNormalMode || normalFinalResponsePending || normalPendingNumber !== number) return;
+      setStatus('Mabel is waiting for confirmation…');
+      requestLiveConfirmation(number);
+    }, waitMs);
+  };
+  const forceAt = Date.now() + 10000;
+  const fallbackCheck = () => {
     if (!currentNormalMode || normalFinalResponsePending || normalPendingNumber !== number) return;
-    setStatus('Mabel is waiting for confirmation…');
-    requestLiveConfirmation(number);
-  }, 1800);
+    if (Date.now() < forceAt && (liveConfirmationResponsePending || (liveOutputContext && liveOutputTime > liveOutputContext.currentTime))) {
+      liveConfirmationRetryFallbackTimer = setTimeout(fallbackCheck, 500);
+      return;
+    }
+    liveConfirmationResponsePending = false;
+    liveConfirmationResponseAudioStarted = false;
+    scheduleRetry();
+  };
+  liveConfirmationRetryFallbackTimer = setTimeout(fallbackCheck, 10000);
 }
 function queueLiveTranscript(delta) {
   liveTranscriptBuffer += String(delta || '');
@@ -351,6 +374,10 @@ async function handleLiveTranscript(text) {
     } else if (liveAffirmative(text)) {
       if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
       liveConfirmationRetryTimer = null;
+      if (liveConfirmationRetryFallbackTimer) clearTimeout(liveConfirmationRetryFallbackTimer);
+      liveConfirmationRetryFallbackTimer = null;
+      liveConfirmationResponsePending = false;
+      liveConfirmationResponseAudioStarted = false;
       await processLiveNormalSelection(normalPendingNumber);
     } else if (candidate !== null) {
       normalPendingNumber = candidate;
@@ -375,7 +402,7 @@ function liveNormalSelectionInstructions(selection, outcome) {
   } else if (outcome?.playbackStarted || outcome?.playbackDeferred) {
     timing = 'Say that the record started playing immediately.';
   }
-  return `The local Multiphone application returned this authoritative result: ${result}. The request succeeded.${track} ${timing} Give a brief, natural, varied approval in your own words if one fits; do not repeat a catchphrase. Then give a brief goodbye of your choice containing “bye” or “goodbye.” Keep the reaction and goodbye at the same conversational volume and intensity as the preceding speech. Do not become louder, projected, or theatrical, and do not ask another question.`;
+  return `The local Multiphone application returned this authoritative result: ${result}. The request succeeded.${track} ${timing} Give at most one brief, natural, varied approval in your own words if one fits; fold it directly into the surrounding sentence or clause with no pause before or after it, and do not make it a separate performance turn or repeat a catchphrase. Continue directly into a brief goodbye of your choice in the same paragraph and uninterrupted delivery, containing “bye” or “goodbye.” Keep the reaction and goodbye at the same conversational volume and intensity as the preceding speech. Do not become louder, projected, or theatrical, and do not ask another question.`;
 }
 async function processLiveNormalSelection(number) {
   if (normalSelectionStarted || !currentNormalMode) return;
@@ -409,13 +436,34 @@ function handleLiveEvent(event) {
     // the Mac Live client. Keep the legacy `audio` fallback for compatibility
     // with older relay payloads, but never pass an absent value to atob().
     const audioDelta = event.delta ?? event.audio;
-    if (typeof audioDelta === 'string' && audioDelta.length > 0) playLiveAudio(audioDelta);
+    if (normalSelectionStarted && !normalFinalResponsePending) return;
+    if (typeof audioDelta === 'string' && audioDelta.length > 0) {
+      if (liveConfirmationResponsePending && currentNormalMode && normalPendingNumber !== null) liveConfirmationResponseAudioStarted = true;
+      playLiveAudio(audioDelta);
+    }
     else setStatus('Mabel Live audio event contained no PCM delta.');
   } else if (event.type === 'session.output_audio.done' || event.type === 'response.output_audio.done' || event.type === 'response.audio.done') {
     finishLiveMabelLine();
     responseAudioDone = true;
+    if (liveConfirmationResponsePending && liveConfirmationResponseAudioStarted && currentNormalMode && normalPendingNumber !== null) {
+      liveConfirmationResponsePending = false;
+      liveConfirmationResponseAudioStarted = false;
+      if (liveConfirmationRetryFallbackTimer) clearTimeout(liveConfirmationRetryFallbackTimer);
+      liveConfirmationRetryFallbackTimer = null;
+      const waitForOutputDrain = () => {
+        if (!currentNormalMode || normalFinalResponsePending || normalPendingNumber === null) return;
+        liveConfirmationRetryTimer = setTimeout(() => {
+          liveConfirmationRetryTimer = null;
+          if (!currentNormalMode || normalFinalResponsePending || normalPendingNumber === null) return;
+          setStatus('Mabel is waiting for confirmation…');
+          requestLiveConfirmation(normalPendingNumber);
+        }, 1800);
+      };
+      waitForOutputDrain();
+    }
     maybeHangUpAfterGoodbye();
   } else if (event.type === 'session.output_transcript.delta') {
+    if (normalSelectionStarted && !normalFinalResponsePending) return;
     const delta = String(event.delta || '');
     appendLiveMabelDelta(delta);
     if (isMabelGoodbye(delta)) {
@@ -747,6 +795,10 @@ async function endCall() {
   clearTimeout(liveTranscriptTimer);
   if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
   liveConfirmationRetryTimer = null;
+  if (liveConfirmationRetryFallbackTimer) clearTimeout(liveConfirmationRetryFallbackTimer);
+  liveConfirmationRetryFallbackTimer = null;
+  liveConfirmationResponsePending = false;
+  liveConfirmationResponseAudioStarted = false;
   liveTranscriptTimer = null;
   liveStarted = false;
   if (liveInputProcessor) liveInputProcessor.onaudioprocess = null;
