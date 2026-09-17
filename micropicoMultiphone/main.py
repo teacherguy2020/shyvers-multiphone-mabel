@@ -18,7 +18,9 @@ except ImportError:
 
 OPTO_PIN = 15
 ACTIVE_LOW = True
-ACTIVE_DEBOUNCE_MS = 100
+# The dime mechanism can produce a short optocoupler pulse. Capture its
+# active-low falling edge with an interrupt instead of requiring a long poll.
+COIN_EDGE_DEBOUNCE_MS = 20
 REARM_MS = 500
 POLL_MS = 10
 HTTP_PORT = 80
@@ -46,6 +48,8 @@ trigger_count = 0
 last_trigger_ms = None
 last_post_status = "Never"
 last_post_ok = None
+last_coin_edge_ms = None
+coin_pending = False
 armed = False
 startup_ready = False
 relay = None
@@ -187,6 +191,21 @@ def relay_off():
 def opto_active():
     v = opto.value()
     return v == 0 if ACTIVE_LOW else v == 1
+
+
+def opto_falling_edge(pin):
+    global last_coin_edge_ms, coin_pending
+    if not startup_ready or not armed:
+        return
+    now = time.ticks_ms()
+    if (last_coin_edge_ms is not None and
+            time.ticks_diff(now, last_coin_edge_ms) < COIN_EDGE_DEBOUNCE_MS):
+        return
+    last_coin_edge_ms = now
+    coin_pending = True
+
+
+opto.irq(trigger=Pin.IRQ_FALLING, handler=opto_falling_edge)
 
 
 def parse_http_url(url):
@@ -631,7 +650,7 @@ def service_web(server, wlan):
 
 
 def main():
-    global armed, startup_ready, ota_reboot_pending
+    global armed, startup_ready, ota_reboot_pending, coin_pending
     print("BOOTED main.py")
     wlan = connect_wifi()
     server = start_server()
@@ -643,7 +662,6 @@ def main():
     print("Status page: http://{}/".format(wlan.ifconfig()[0]))
     print("Waiting for GP15 inactive startup qualification.")
 
-    active_since = None
     inactive_since = None
     startup_inactive_since = None
 
@@ -680,16 +698,11 @@ def main():
             else:
                 startup_inactive_since = None
         elif armed:
-            if active:
-                if active_since is None:
-                    active_since = now
-                elif time.ticks_diff(now, active_since) >= ACTIVE_DEBOUNCE_MS:
-                    start_normal_mabel()
-                    armed = False
-                    active_since = None
-                    inactive_since = None
-            else:
-                active_since = None
+            if coin_pending:
+                coin_pending = False
+                armed = False
+                start_normal_mabel()
+                inactive_since = None
         else:
             if not active:
                 if inactive_since is None:

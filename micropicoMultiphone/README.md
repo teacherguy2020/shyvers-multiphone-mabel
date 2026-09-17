@@ -56,9 +56,11 @@ POST http://<pico-ip>/relay/off
 Authorization: Bearer <RELAY_TEST_TOKEN>
 ```
 
-After GP15 has passed its debounce interval, a valid dime trigger turns the
-jewel on before the bridge request. A failed bridge request turns it back off.
-The Mac bridge turns it off when the Mabel client process ends.
+The firmware captures the active-low GP15 falling edge immediately, with a
+short edge-debounce guard, so a fast dime pulse is not lost between polling
+cycles. A valid dime trigger turns the jewel on before the bridge request. A
+failed bridge request turns it back off. The Mac bridge turns it off when the
+Mabel client process ends.
 
 `/relay/status` includes the redacted Mabel destination as `mabelTarget` so a
 Pico network problem can be distinguished from an HTTP failure. An

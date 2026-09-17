@@ -819,7 +819,9 @@ function scheduleFinalResponseClose() {
     // a real period of audio silence.
     const goodbyeTailMs = 1_800;
     const goodbyeQuietMs = 1_200;
-    const missingAudioDoneFallbackMs = 3_000;
+    // A few Live responses omit audio-done after the goodbye transcript. Keep
+    // a short tail for the final PCM, but do not leave the caller waiting.
+    const missingAudioDoneFallbackMs = 2_000;
     const elapsedMs = finalGoodbyeAt ? Date.now() - finalGoodbyeAt : 0;
     const quietForMs = lastOutputAudioAt ? Date.now() - lastOutputAudioAt : 0;
     finalResponseTimer = setTimeout(() => {
