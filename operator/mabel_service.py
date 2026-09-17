@@ -60,6 +60,46 @@ def stop_mabel_process(process, reason):
     return process.poll() is not None
 
 
+def set_multiphone_relay(server, on):
+    """Set the Pico jewel relay without exposing its token in logs."""
+    base_url = str(getattr(server, "multiphone_pico_url", "") or "").rstrip("/")
+    token = str(getattr(server, "multiphone_relay_token", "") or "")
+    if not base_url or not token:
+        print("Mabel jewel relay control is not configured", flush=True)
+        return False
+    endpoint = f"{base_url}/relay/{'on' if on else 'off'}"
+    request = urllib.request.Request(
+        endpoint,
+        data=b"",
+        headers={"Authorization": f"Bearer {token}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            status = response.status
+            if 200 <= status < 300:
+                print(f"Mabel jewel relay {'on' if on else 'off'}: HTTP {status}", flush=True)
+                return True
+            print(f"Mabel jewel relay request returned HTTP {status}", flush=True)
+    except urllib.error.HTTPError as error:
+        print(f"Mabel jewel relay request failed HTTP {error.code}", flush=True)
+    except urllib.error.URLError as error:
+        print(f"Mabel jewel relay request failed: {error.reason}", flush=True)
+    return False
+
+
+def monitor_mabel_process(server, process):
+    """Turn the jewel off when the currently-owned Mabel process exits."""
+    global MABEL_PROCESS
+    returncode = process.wait()
+    with LOCK:
+        if MABEL_PROCESS is not process:
+            return
+        MABEL_PROCESS = None
+    set_multiphone_relay(server, False)
+    print(f"Mabel client exited pid={process.pid} returncode={returncode}", flush=True)
+
+
 def load_last_call_time():
     try:
         with open(LAST_CALL_STATE_FILE, "r", encoding="utf-8") as state_file:
@@ -546,6 +586,11 @@ class MabelHandler(BaseHTTPRequestHandler):
                     return self.send_json(503, {"ok": False, "error": f"Could not start Mabel: {error}"})
                 with LOCK:
                     MABEL_PROCESS = process
+                threading.Thread(
+                    target=monitor_mabel_process,
+                    args=(self.server, process),
+                    daemon=True,
+                ).start()
             return self.send_json(202, {"ok": True, "mode": "off-script" if off_script else "normal",
                                         "client": client_name, "pid": process.pid, "replacedPid": replaced_pid,
                                         "state": "starting"})
@@ -722,6 +767,12 @@ def main():
     parser.add_argument("--live-master-gain-db", type=float,
                         default=float(os.environ.get("MABEL_MASTER_GAIN_DB", "10")),
                         help="Master gain applied to all normal Live HIFI DSD output (default: +10 dB)")
+    parser.add_argument("--multiphone-pico-url",
+                        default=os.environ.get("MULTIPHONE_PICO_URL", "http://10.0.0.47"),
+                        help="Multiphone Pico base URL for jewel relay control")
+    parser.add_argument("--multiphone-relay-token",
+                        default=os.environ.get("MULTIPHONE_RELAY_TOKEN", ""),
+                        help="Bearer token for Multiphone Pico jewel relay control")
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), MabelHandler)
     server.now_playing_endpoint = args.now_playing_url
@@ -746,6 +797,8 @@ def main():
     server.live_telephone_eq = args.live_telephone_eq == "true"
     server.live_voice_gain = max(0.0, args.live_voice_gain)
     server.live_master_gain_db = args.live_master_gain_db
+    server.multiphone_pico_url = args.multiphone_pico_url
+    server.multiphone_relay_token = args.multiphone_relay_token
     server.realtime_input = args.realtime_input
     server.node_binary = find_node_binary()
     server.realtime_env = realtime_environment()

@@ -24,6 +24,22 @@ The Multiphone remains the customer interface, the nickel starts the transaction
 Mabel acts as the central music operator, and the existing audio system provides
 the program audio.
 
+## Confirmed Multiphone Pico wiring
+
+The original numbered shoe keeps the dime input and jewel output separate:
+
+* Pins 6–7 are the normally-open dime-switch circuit. The optocoupler output
+  feeds Pico GP15, which remains active-low.
+* Pins 8–9 are the original jewel-lamp circuit: socket center contact to pin 8
+  and threaded shell to pin 9.
+* A 5V lamp supply runs through the GP16 Songle relay: supply positive to COM,
+  NO to shoe pin 8, and shoe pin 9 to supply negative.
+
+The installed relay is physically confirmed active-high: GP16 level 1 turns
+the jewel on and level 0 turns it off. Production firmware initializes GP16
+LOW/OFF and enables the jewel for a valid GP15 dime trigger, then turns it off
+when the Mabel call process ends.
+
 ## Wiki
 
 The editable Markdown source is in [`wiki/`](./wiki/). The browsable HTML version

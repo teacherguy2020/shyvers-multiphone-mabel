@@ -384,7 +384,9 @@ function offScriptRequestFromText(text) {
   if (/\b(?:what(?:'s| is)|now)\s+(?:currently\s+)?playing\b|\bnow playing\b/i.test(value)) return { action: 'now_playing' };
   const mix = value.match(/\b(?:play|put on|make|give me)\b.*?\bmix\b(?:\s+of)?\s+(.+)/i) || value.match(/\bmix\s+(?:of\s+)?(.+)/i);
   if (mix) {
-    const artists = mix[1].split(/\s+and\s+|\s*,\s*/i).map((item) => item.trim()).filter(Boolean);
+    const artists = mix[1].split(/\s+and\s+|\s*,\s*/i)
+      .map((item) => item.replace(/^(?:artists?|songs?|records?|music)(?:\s+by)?\s+/i, '').trim())
+      .filter(Boolean);
     if (artists.length >= 2) return { action: 'play_mix', artists };
   }
   const album = value.match(/\b(?:play|put on|get|find|queue)\s+(?:the\s+)?album\s+[“"]?(.+?)[”"]?$/i)

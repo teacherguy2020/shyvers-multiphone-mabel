@@ -252,7 +252,7 @@ function liveOffScriptRequestFromText(text) {
   const mix = value.match(/\b(?:play|put on|make|give me)\b.*?\bmix\b(?:\s+of)?\s+(.+)/i) || value.match(/\bmix\s+(?:of\s+)?(.+)/i);
   if (mix) {
     const artists = mix[1].split(/\s+and\s+|\s*,\s*/i)
-      .map(item => item.replace(/^(?:songs?|records?|music)\s+by\s+/i, '').trim())
+      .map(item => item.replace(/^(?:artists?|songs?|records?|music)(?:\s+by)?\s+/i, '').trim())
       .filter(Boolean);
     if (artists.length >= 2) return { action: 'play_mix', artists };
   }
