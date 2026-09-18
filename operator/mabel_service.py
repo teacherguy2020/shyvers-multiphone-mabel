@@ -762,11 +762,11 @@ def main():
                         default=os.environ.get("MABEL_LIVE_TELEPHONE_EQ", "true"),
                         help="Enable the Live telephone EQ (default: true)")
     parser.add_argument("--live-voice-gain", type=float,
-                        default=float(os.environ.get("MABEL_LIVE_GAIN", "1.78275")),
-                        help="Normal Live voice gain (default: 1.78275, +1.5 dB over 1.5; use --gain 1.0 for clean-path diagnostics)")
+                        default=float(os.environ.get("MABEL_LIVE_GAIN", "1.0")),
+                        help="Normal Live voice gain (default: 1.0)")
     parser.add_argument("--live-master-gain-db", type=float,
-                        default=float(os.environ.get("MABEL_MASTER_GAIN_DB", "10")),
-                        help="Master gain applied to all normal Live HIFI DSD output (default: +10 dB)")
+                        default=float(os.environ.get("MABEL_MASTER_GAIN_DB", "9")),
+                        help="Master gain applied to all normal Live HIFI DSD output (default: +9 dB)")
     parser.add_argument("--multiphone-pico-url",
                         default=os.environ.get("MULTIPHONE_PICO_URL", "http://10.0.0.47"),
                         help="Multiphone Pico base URL for jewel relay control")

@@ -41,10 +41,10 @@ const ambienceVolume = String(Math.min(1, Math.max(0, Number(args.get('ambience-
 const ambienceLoopDurationSec = 300;
 const heelsVoiceGain = Math.min(1, Math.max(0, Number(args.get('heels-voice-gain') ?? 0.18)));
 const voicePlaybackSpeed = Math.max(1, Number(args.get('voice-speed') ?? 1.0));
-const parsedVoiceGain = Number(args.get('gain') ?? process.env.MABEL_LIVE_GAIN ?? 1.78275);
-const requestedVoiceGain = Number.isFinite(parsedVoiceGain) ? Math.max(0, parsedVoiceGain) : 1.78275;
+const parsedVoiceGain = Number(args.get('gain') ?? process.env.MABEL_LIVE_GAIN ?? 1.0);
+const requestedVoiceGain = Number.isFinite(parsedVoiceGain) ? Math.max(0, parsedVoiceGain) : 1.0;
 const cleanPathRequested = args.get('voice-speed') === '1.0' && args.get('gain') === '1.0' && !args.has('master-gain-db');
-const parsedMasterGainDb = Number(args.get('master-gain-db') ?? process.env.MABEL_MASTER_GAIN_DB ?? (cleanPathRequested ? 0 : 10));
+const parsedMasterGainDb = Number(args.get('master-gain-db') ?? process.env.MABEL_MASTER_GAIN_DB ?? 0);
 const masterGainDb = Number.isFinite(parsedMasterGainDb) ? parsedMasterGainDb : 0;
 const masterGainLinear = 10 ** (masterGainDb / 20);
 const cleanPcmPath = voicePlaybackSpeed === 1 && requestedVoiceGain === 1 && masterGainDb === 0;
@@ -87,21 +87,22 @@ const startedAt = Date.now();
 const apiKey = execFileSync('/usr/bin/security', ['find-generic-password', '-s', 'Shyvers Multiphone / OpenAI', '-a', 'mabel-voice', '-w'], { encoding: 'utf8' }).trim();
 if (!apiKey) throw new Error('OpenAI API key is not configured');
 
-const persona = `You are Mabel, a lively young adult of about 19, working as a 1940s telephone operator and record spinner for Multiphone in Seattle. Speak only clear American English in a distinctly youthful, light, high-register, lively, animated 1940s telephone-operator vernacular. Sound unmistakably young and bright—not mature, low, husky, or contralto—and keep the pitch lifted as though smiling. Use authentic 1940s American diction, idiom, rhythm, and telephone etiquette throughout: phrases such as “why, hello there,” “my goodness,” “just grand,” “swell,” “right away,” “hold tight,” and “one moment” are appropriate when they fit. Avoid modern assistant language and modern filler such as “okay,” “no problem,” “gotcha,” “yeah,” “totally,” “awesome,” or “sure”; do not sound like a contemporary customer-service agent. Use light period humor and occasional tasteful affection, but stay concise. Speak at a naturally brisk pace approximately 15–20% faster than ordinary conversation, using short pauses and crisp consonants—quick and excited, but never rushed or unintelligible. The caller is already connected to Mabel; she retrieves records from the Multiphone library and never connects, transfers, routes, dials, or “puts through” anyone. Never invent titles, artists, numbers, queue positions, credit counts, or service results. Valid numbered records are 1 through ${maxNumber}. Normal mode is a deterministic numbered-request flow. Do not independently confirm, repeat, reinterpret, or acknowledge a caller's possible record number; wait silently while the local application evaluates it and supplies the exact confirmation wording. When the local application supplies a confirmation, speak only those supplied digit words in the same order—never substitute, round, or invent a digit. If the caller corrects the number, wait for the local application to supply the new confirmation. MANDATORY CONFIRMATION DELIVERY: every number confirmation must be an unmistakable yes-or-no question ending with a clearly audible, strongly high-rising question intonation on the final digit. Never end a confirmation with falling or level intonation. If the caller explicitly says “go off-script” or “I'm a VIP,” enter expanded private music service. The local application performs every VIP action and supplies the exact result; never invent or imply a title, artist, queue state, playback state, credits, or success. After a supplied successful result, report only those facts and follow the local application's sign-off instruction. The local application is authoritative for all Multiphone actions. Never claim success until it supplies the result.`;
-const styleGuide = `Speak as a real young American woman answering one telephone line in Seattle in the 1940s, not as a narrator or a performer doing a caricature. You are a busy central music-station operator speaking directly to one patron. Keep routine exchanges short, natural, cheerful, confident, and lightly playful without becoming theatrical, cartoonish, or overly bubbly. Use authentic period diction, idiom, rhythm, and telephone etiquette naturally and sparingly; “lemme grab that off the shelf,” “hold tight,” “one moment,” “my goodness,” “just grand,” and “swell” may fit. Avoid modern slang, technical language, AI language, customer-service clichés, and explanations about portraying the 1940s. Use moderate telephone backchannels only when useful—“mm-hmm,” “uh-huh,” or “right”—and never talk over the patron or compete with a record number. Stop speaking immediately when interrupted and listen for the correction. Keep the line moving because other patrons are waiting. Maintain the same youthful high register, volume, and conversational pace throughout each response, including the final goodbye; do not suddenly become louder, faster, or more emphatic at the end.`;
-const pacingAdjustment = 'Use a slightly less brisk working pace—about 10–15% faster than ordinary conversation—with natural pauses between phrases. Stay lively and clear, but do not rush or compress words. Keep any brief approval of a selection natural and varied; you may express that you like the choice in your own words, but do not repeat a stock phrase or catchphrase. Keep such reactions at the same normal conversational volume as the surrounding sentence. Do not shout, punch, bark, or make sudden loudness or theatrical emphasis changes.';
-const volumeDeliveryGuide = `VOLUME AND DELIVERY
+const persona = `You are Mabel, a young Multiphone operator at a busy central music station in Seattle in the late 1940s.
 
-Maintain a consistent conversational speaking volume throughout the entire call.
+Sound youthful, warm, bright, friendly, and natural. Speak privately to one patron over a telephone line, not to an audience. Use a relaxed conversational pace with short natural pauses and keep responses concise. Maintain an even conversational volume, pitch, and intensity throughout every response, including confirmations and goodbyes. Never shout, rush, bark, punch words, or suddenly become louder or faster. Do not become theatrical, cartoonish, overly bubbly, husky, or announcer-like.
 
-Do not become louder, more projected, or more animated when ending the conversation.
+Use clear American English with light, natural 1940s diction and telephone etiquette. Expressions such as “swell,” “hold tight,” “one moment,” or “lemme grab that off the shelf” may be used occasionally when they fit. Do not force period slang. Avoid modern assistant language, technical or AI terminology, customer-service clichés, and modern filler such as “awesome,” “totally,” or “gotcha.”
 
-Final acknowledgments and goodbyes should be spoken at the same volume and vocal intensity as the preceding conversation.
+Routine exchanges should be short and personable. Brief natural backchannels are fine when useful. Never talk over a patron giving or correcting a record number. Stop speaking immediately when interrupted and listen. Keep the line moving because other patrons are waiting.
 
-Treat the sign-off as a quiet telephone goodbye to one person, not an announcement or performance.
+The local Multiphone application is authoritative for record numbers, titles, artists, confirmations, credits, queue state, playback state, and service results. Never invent, infer, round, substitute, or reinterpret those facts. Valid numbered records are 1 through ${maxNumber}.
 
-Do not emphasize or project the final words of the call.`;
-const voiceTimbreGuide = 'VOICE TIMBRE\n\nUse a slightly nasal, forward telephone timbre that suits a young 1940s operator. Keep it subtle and natural, never exaggerated, honking, cartoonish, or theatrical.';
+Normal mode is a deterministic numbered-request flow. When the patron gives a possible record number, do not independently repeat, confirm, acknowledge, reinterpret, or act on it. Wait silently while the local application evaluates it. When the application supplies confirmation wording, repeat the exact supplied number phrase once, without converting it into digit-by-digit words or adding a lead-in. Ask confirmations naturally as yes-or-no questions with a clear rising inflection on the final word, without exaggeration. If the patron corrects a number, wait for the local application to supply the new confirmation.
+
+If the patron explicitly says “go off-script” or “I'm a VIP,” enter the private music service. The local application performs every VIP action and supplies the authoritative result. Never invent or imply a title, artist, queue state, playback state, credits, or success. Report only what the application establishes.
+
+Above all, sound like a real young woman who answered a telephone at a busy music station—not like a voice assistant or a character performing a script.`;
+
 const usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0, input_audio_tokens: 0, output_audio_tokens: 0 };
 let ws;
 let recorder;
@@ -123,6 +124,10 @@ let outputQueue = Promise.resolve();
 let playbackGeneration = 0;
 let currentPlayback = null;
 let streamWriter = null;
+let streamPrebufferMs = 1500;
+let voiceOutputReady = true;
+let preRingbackPcm = [];
+let preRingbackBytes = 0;
 let livePcmBytesReceived = 0;
 let outputAudioBytes = 0;
 let outputAudioDeltas = 0;
@@ -150,6 +155,7 @@ let finalResponseTimer;
 let finalResponseSafetyTimer;
 let cleanedUp = false;
 let pendingNumber = null;
+let pendingNumberPhrase = '';
 let awaitingConfirmation = false;
 let selectionInProgress = false;
 let offScript = false;
@@ -235,14 +241,15 @@ function spawnAudioToolboxFile(file, volume = null, durationSec = null) {
 function log(message, details = {}) {
   console.log(`[live ${new Date().toISOString()}] ${message}${Object.keys(details).length ? ` ${JSON.stringify(details)}` : ''}`);
 }
-function playEffect(name) {
+function playEffect(name, requestedDurationSec = null) {
   const file = path.join(soundsDir, soundFiles[name]);
   if (!existsSync(file)) { log('sound effect missing', { name, file }); return Promise.resolve(); }
-  const volume = name === 'ringback' ? '0.125' : name === 'footsteps' ? '0.175' : '0.375';
+  const volume = name === 'ringback' ? '0.08125' : name === 'footsteps' ? '0.175' : '0.375';
   return new Promise((resolve) => {
     let playback;
     try {
-      playback = spawnAudioToolboxFile(file, volume, name === 'ringback' ? 9 : name === 'footsteps' ? 6 : 4);
+      const durationSec = requestedDurationSec ?? (name === 'ringback' ? 9 : name === 'footsteps' ? 6 : 4);
+      playback = spawnAudioToolboxFile(file, volume, durationSec);
     } catch (error) {
       log('sound effect output device error', { name, outputDevice, error: error.message });
       resolve();
@@ -434,14 +441,7 @@ function confirmationDigits(number) {
   const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
   return String(number).split('').map((digit) => words[Number(digit)]).join(' ');
 }
-const confirmationLeadIns = [
-  'I don’t want to grab the wrong one, so just confirming',
-  'Let me make sure I have the right record before I fetch it—just confirming',
-  'It’s a bit noisy here, so just confirming',
-  'Before I pull that one from the cabinet, just confirming',
-];
-let confirmationStyleIndex = 0;
-function scheduleConfirmationRetry(number, waitMs = 1800) {
+function scheduleConfirmationRetry(number, waitMs = 5000) {
   clearTimeout(confirmationRetryTimer);
   confirmationRetryTimer = setTimeout(() => {
     confirmationRetryTimer = null;
@@ -452,7 +452,7 @@ function scheduleConfirmationRetry(number, waitMs = 1800) {
   confirmationRetryTimer.unref();
 }
 function armConfirmationRetryFallback(number) {
-  const forceAt = Date.now() + 10000;
+  const forceAt = Date.now() + 15000;
   const check = () => {
     if (closing || !awaitingConfirmation || pendingNumber !== number) return;
     if (Date.now() < forceAt && (confirmationResponsePending || outputPlaying)) {
@@ -467,19 +467,20 @@ function armConfirmationRetryFallback(number) {
   confirmationRetryFallbackTimer = setTimeout(check, 10000);
   confirmationRetryFallbackTimer.unref();
 }
-function requestConfirmation(number) {
+function requestConfirmation(number, phrase = pendingNumberPhrase) {
   clearTimeout(confirmationRetryTimer);
   confirmationRetryTimer = null;
   clearTimeout(confirmationRetryFallbackTimer);
   confirmationRetryFallbackTimer = null;
+  resetStreamPlayer('new confirmation; discard queued prior response audio');
+  lastLiveAudioDeltaAt = null;
+  streamPrebufferMs = 1000;
   confirmationResponsePending = true;
   confirmationResponseAudioStarted = false;
-  const spokenDigits = confirmationDigits(number);
-  const leadIn = confirmationLeadIns[confirmationStyleIndex % confirmationLeadIns.length];
-  confirmationStyleIndex += 1;
-  log('confirmation requested', { number, spokenDigits, leadIn, questionIntonation: 'high-rising-final-digit' });
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'response.cancel', event_id: `mabel_confirmation_cancel_${Date.now()}` }));
-  announce(`The local application has supplied the exact confirmation. Say one sentence only: “${leadIn}, ${spokenDigits}?” Say the digit words only once, at the end of the sentence. Do not repeat or lead with the digits, do not say “you said ${spokenDigits},” and do not add a second version of the number. MANDATORY: this must be an unmistakable yes-or-no question with a strong, clearly audible upward pitch rise on the final digit word ${spokenDigits.split(' ').at(-1)}. Do not use falling or level intonation; hold the rise through the end of that final digit and leave a brief beat afterward. Do not say any other number or substitute a digit.`);
+  const spokenPhrase = String(phrase || confirmationDigits(number)).trim();
+  pendingNumberPhrase = spokenPhrase;
+  log('confirmation requested', { number, spokenPhrase, questionIntonation: 'high-rising-final-word' });
+  announce(`The local application supplied this exact confirmation phrase: “${spokenPhrase}?” Repeat that phrase exactly once, without converting it into digit-by-digit words and without adding a lead-in, explanation, or extra number. Ask it naturally as a yes-or-no question with a clear upward inflection on the final word. Keep the same relaxed conversational pace and volume as the rest of the call.`);
   armConfirmationRetryFallback(number);
 }
 function announce(content) {
@@ -653,6 +654,7 @@ function interruptLocalPlayback(reason) {
   playbackGeneration += 1;
   voiceResampleBuffer = [];
   voiceResamplePosition = 0;
+  if (streamOutput && player) resetStreamPlayer(reason);
   outputQueue = Promise.resolve();
   if (currentPlayback) {
     log('stale playback interrupted', { reason });
@@ -687,15 +689,25 @@ function drainStreamPlayer() {
     else finish();
   });
 }
+function resetStreamPlayer(reason) {
+  if (!player) return;
+  log('stream player reset', { reason });
+  if (player.stdin?.writable) player.stdin.end();
+  player.kill('SIGTERM');
+  player = null;
+  streamWriter = null;
+  setOutputPlaying(false);
+}
 function ensureNativeStream() {
   if (streamWriter?.writable) return;
   if (useNativePlayer) {
     const playerArgs = [];
+    playerArgs.push('--prebuffer-ms', String(streamPrebufferMs));
     if (telephoneEq) playerArgs.push('--telephone-eq');
     if (masterGainDb !== 0) playerArgs.push('--master-gain-db', String(masterGainDb));
     if (outputDevice) playerArgs.push('--output-device', outputDevice);
     player = spawn(nativePlayer, playerArgs, { stdio: ['pipe', 'ignore', 'pipe'] });
-    log('voice player started', { backend: 'AVFoundation', output: outputDevice || 'system default', telephoneEq, masterGainDb, format: 'pcm_s16le mono 24000 Hz' });
+    log('voice player started', { backend: 'AVFoundation', output: outputDevice || 'system default', telephoneEq, masterGainDb, prebufferMs: streamPrebufferMs, format: 'pcm_s16le mono 24000 Hz' });
   } else {
   const deviceArgs = audioDeviceIndex === '' ? [] : ['-audio_device_index', audioDeviceIndex];
   player = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 's16le', '-ar', '24000', '-ch_layout', 'mono', '-i', 'pipe:0', '-ar', '48000', '-ch_layout', 'stereo', '-flush_packets', '1', '-f', 'audiotoolbox', ...deviceArgs, 'default'], { stdio: ['pipe', 'ignore', 'pipe'] });
@@ -707,6 +719,45 @@ function ensureNativeStream() {
   player.once('close', (code, signal) => { if (code !== 0 || signal) log('stream player closed', { code, signal }); player = null; streamWriter = null; });
   streamWriter = player.stdin;
 }
+function handoffStreamPcm(pcm) {
+  ensureNativeStream();
+  setOutputPlaying(true);
+  if (streamWriter?.writable) {
+    const frames = pcm.length / 2;
+    if (!Number.isInteger(frames) || frames * 2 !== pcm.length) {
+      pcmInvariantViolations += 1;
+      log('PCM invariant violation', { stage: 'AVFoundation handoff', reason: 'bytes do not equal frames × 2', bytes: pcm.length, frames });
+      return;
+    }
+    const accepted = streamWriter.write(pcm);
+    if (!accepted) {
+      avfoundationBackpressureCount += 1;
+      if (Date.now() - lastBackpressureLogAt >= 1000) {
+        log('PCM handoff backpressure', { bytes: pcm.length, frames, count: avfoundationBackpressureCount });
+        lastBackpressureLogAt = Date.now();
+      }
+    }
+    if (captureResponse && !captureSaved) captureResponse.renderedChunks.push(pcm);
+    avfoundationAudioBytes += pcm.length;
+    avfoundationHandoffFrames += frames;
+    avfoundationWriteCalls += 1;
+  } else {
+    pcmInvariantViolations += 1;
+    log('PCM invariant violation', { stage: 'AVFoundation handoff', reason: 'stream writer unavailable', bytes: pcm.length });
+  }
+  clearTimeout(outputIdleTimer);
+  outputIdleTimer = setTimeout(() => setOutputPlaying(false), 1500);
+}
+function releasePreRingbackAudio() {
+  voiceOutputReady = true;
+  if (!preRingbackPcm.length) return;
+  const queued = preRingbackPcm;
+  const bytes = preRingbackBytes;
+  preRingbackPcm = [];
+  preRingbackBytes = 0;
+  log('releasing prewarmed voice audio', { bytes });
+  queued.forEach((pcm) => handoffStreamPcm(pcm));
+}
 function outputDelta(audio) {
   if (selectionInProgress && !finalResponsePending) {
     if (!staleLiveAudioDiscardLogged) {
@@ -715,7 +766,9 @@ function outputDelta(audio) {
     }
     return;
   }
-  if (confirmationResponsePending && awaitingConfirmation) confirmationResponseAudioStarted = true;
+  if (confirmationResponsePending && awaitingConfirmation) {
+    confirmationResponseAudioStarted = true;
+  }
   if (!firstOutputLogged) { firstOutputLogged = true; log('first output audio', { latencyMs: liveStartedAt ? Date.now() - liveStartedAt : null }); }
   const receivedAt = Date.now();
   if (lastLiveAudioDeltaAt !== null) {
@@ -753,36 +806,12 @@ function outputDelta(audio) {
     lastOutputDiagnosticAt = Date.now();
   }
   if (streamOutput) {
-    ensureNativeStream();
-    setOutputPlaying(true);
-    if (streamWriter?.writable) {
-      const frames = pcm.length / 2;
-      if (!Number.isInteger(frames) || frames * 2 !== pcm.length) {
-        pcmInvariantViolations += 1;
-        log('PCM invariant violation', { stage: 'AVFoundation handoff', reason: 'bytes do not equal frames × 2', bytes: pcm.length, frames });
-        return;
-      }
-      const accepted = streamWriter.write(pcm);
-      if (!accepted) {
-        avfoundationBackpressureCount += 1;
-        if (Date.now() - lastBackpressureLogAt >= 1000) {
-          log('PCM handoff backpressure', { bytes: pcm.length, frames, count: avfoundationBackpressureCount });
-          lastBackpressureLogAt = Date.now();
-        }
-      }
-      if (captureResponse && !captureSaved) captureResponse.renderedChunks.push(pcm);
-      avfoundationAudioBytes += pcm.length;
-      avfoundationHandoffFrames += frames;
-      avfoundationWriteCalls += 1;
+    if (!voiceOutputReady) {
+      preRingbackPcm.push(pcm);
+      preRingbackBytes += pcm.length;
     } else {
-      pcmInvariantViolations += 1;
-      log('PCM invariant violation', { stage: 'AVFoundation handoff', reason: 'stream writer unavailable', bytes: pcm.length });
+      handoffStreamPcm(pcm);
     }
-    clearTimeout(outputIdleTimer);
-    // AudioToolbox may still be draining the physical speaker after the final
-    // network delta. Keep half-duplex input suppressed through that tail so
-    // speaker leakage cannot trigger another Live response.
-    outputIdleTimer = setTimeout(() => setOutputPlaying(false), 1500);
     return;
   }
   if (!outputStreamOpen) { outputStreamOpen = true; outputChunks = []; }
@@ -891,6 +920,7 @@ async function handleTranscript(text) {
   if (!offScript && offScriptTriggerPattern.test(clean)) {
     offScript = true;
     pendingNumber = null;
+    pendingNumberPhrase = '';
     awaitingConfirmation = false;
     log('VIP mode enabled', { trigger: clean });
     announce('The caller explicitly invoked the private off-script service. Acknowledge that briefly in period-appropriate language, then ask what music they would like. Do not mention software, tools, or technical details. Remain in VIP mode.');
@@ -909,10 +939,19 @@ async function handleTranscript(text) {
   if (awaitingConfirmation && pendingNumber !== null) {
     if (candidate !== null && candidate !== pendingNumber) {
       pendingNumber = candidate;
-      requestConfirmation(candidate);
+      pendingNumberPhrase = clean;
+      requestConfirmation(candidate, clean);
     } else if (negative(clean)) {
-      if (candidate !== null) pendingNumber = candidate;
-      requestConfirmation(pendingNumber);
+      clearTimeout(confirmationRetryTimer);
+      confirmationRetryTimer = null;
+      clearTimeout(confirmationRetryFallbackTimer);
+      confirmationRetryFallbackTimer = null;
+      confirmationResponsePending = false;
+      confirmationResponseAudioStarted = false;
+      pendingNumber = null;
+      pendingNumberPhrase = '';
+      awaitingConfirmation = false;
+      announce('The caller rejected the number confirmation. Apologize briefly and ask for the number again in natural period-appropriate language—for example, “Apologies—what number did you say?” Do not repeat or guess the previous number, and wait for the caller to provide a new number.');
     } else if (affirmative(clean)) {
       clearTimeout(confirmationRetryTimer);
       confirmationRetryTimer = null;
@@ -920,35 +959,42 @@ async function handleTranscript(text) {
       confirmationRetryFallbackTimer = null;
       confirmationResponsePending = false;
       confirmationResponseAudioStarted = false;
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'response.cancel', event_id: `mabel_selection_cancel_${Date.now()}` }));
       await submitSelection(pendingNumber);
     }
     else if (candidate !== null) {
       pendingNumber = candidate;
-      requestConfirmation(candidate);
+      pendingNumberPhrase = clean;
+      requestConfirmation(candidate, clean);
     }
     return;
   }
   if (candidate !== null) {
-    pendingNumber = candidate; awaitingConfirmation = true;
-    requestConfirmation(candidate);
+    pendingNumber = candidate; pendingNumberPhrase = clean; awaitingConfirmation = true;
+    requestConfirmation(candidate, clean);
   }
 }
 function queueTranscriptDelta(delta) {
   transcript += String(delta || '');
   clearTimeout(transcriptTimer);
   // Live documents input transcript deltas but does not expose a separate
-  // input-transcript.done event. Use a generous quiet period so pauses inside
-  // phrases such as “No, wait, 148” do not finalize the first fragment.
+  // input-transcript.done event. Hold all-number phrases longer so compound
+  // forms such as “one hundred and three” do not finalize as “one” first.
+  const numericWords = new Set(['zero', 'oh', 'naught', 'one', 'two', 'tree', 'free', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'and']);
+  const transcriptTokens = transcript.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  const numericPhrase = transcriptTokens.length > 0 && transcriptTokens.every((token) => numericWords.has(token) || /^\d+$/.test(token));
+  const quietMs = numericPhrase ? 1100 : 650;
   transcriptTimer = setTimeout(() => {
     const complete = transcript;
     transcript = '';
-    log('input transcript finalized locally', { text: complete.trim(), quietMs: 1200 });
+    log('input transcript finalized locally', { text: complete.trim(), quietMs });
     handleTranscript(complete).catch((error) => log('transcript handling error', { error: error.message }));
-  }, 1200);
+  }, quietMs);
 }
 async function submitSelection(number) {
   selectionInProgress = true; awaitingConfirmation = false; staleLiveAudioDiscardLogged = false;
+  lastLiveAudioDeltaAt = null;
+  streamPrebufferMs = 3500;
+  resetStreamPlayer('selection confirmed; discard prior response audio');
   const actionStarted = Date.now();
   try {
     const result = await post('/shyvers/response', {
@@ -989,7 +1035,7 @@ async function submitSelection(number) {
     } else {
       finalInstruction += `Briefly summarize the supplied application result using only these facts: ${JSON.stringify(outcome)}. `;
     }
-    finalInstruction += 'Deliver the entire result, optional reaction, and goodbye as one compact, uninterrupted paragraph with brisk continuous speech: do not insert long pauses between the supplied facts or clauses. Add at most one brief, natural, period-appropriate reaction, but fold it directly into the surrounding sentence or clause with no pause before or after it; reactions should not be overly energetic and must not become a separate performance turn. Continue directly into a brief, natural period-appropriate goodbye of your choice in that same paragraph and same uninterrupted delivery; it must clearly end the call and include “bye” or “goodbye.” Do not use the same fixed goodbye every time. Deliver the goodbye as an ordinary spoken sentence at the same volume, pitch, register, and pace as the preceding sentence—do not suddenly get louder, faster, more emphatic, or more animated, and do not treat the final goodbye words as a punchline or flourish. Pronounce every word fully; do not compress, clip, or rush the final words. Use a calm sentence ending, not exclamatory emphasis. Do not ask another question; this is the final response and end the call after speaking.';
+    finalInstruction += 'Give the result naturally in one compact but complete paragraph. Include the supplied title, artist, and queue or playback fact; do not truncate the result just to finish quickly. You may add at most one short, understated period-appropriate reaction. If a natural sign-off calls for a brief explanation—such as being busy, needing to keep moving, or having other callers waiting—you may explain that in your own words, but do not use a fixed script or force that idea into every call. Use only brief natural pauses between the title, artist, queue fact, explanation if any, and goodbye; do not leave a long pause between them. Do not say “well,” “just a moment,” “one second,” or any waiting phrase before or between the result facts. After the queue fact, give a complete natural goodbye sentence containing “bye” or “goodbye”; do not reduce the sign-off to a bare “bye.” Keep exactly the same relaxed conversational pace, volume, pitch, and intensity through the goodbye. Do not rush, shout, emphasize the ending, or turn the goodbye into a flourish. Use a plain, non-exclamatory sentence ending; do not add an exclamation point or exclamatory intonation. Do not ask another question.';
     armFinalResponseShutdown();
     announce(finalInstruction);
   } catch (error) {
@@ -1030,6 +1076,8 @@ function handleEvent(event) {
     announce('Begin now. Say exactly one brief greeting: “Multiphone! Mabel here—hello to Clem’s Place. What number, please?” Then listen.');
   } else if (event.type === 'session.output_audio.delta') outputDelta(event.delta);
   else if (event.type === 'session.output_audio.done' || event.type === 'response.output_audio.done' || event.type === 'response.audio.done') {
+    // Do not count ordinary silence between Live responses as an audio gap.
+    lastLiveAudioDeltaAt = null;
     completedAudioResponses += 1;
     if (confirmationResponsePending && confirmationResponseAudioStarted && awaitingConfirmation) {
       confirmationResponsePending = false;
@@ -1087,18 +1135,23 @@ function handleEvent(event) {
 }
 async function start() {
   callSession = await post('/shyvers/call', { event: 'coin', station: "Clem's Place", suppressGreeting: true });
-  const ringbackPromise = playEffect('ringback');
+  const ringbackPromise = playEffect('ringback', 2.5);
   startVolumeDucking();
-  await ringbackPromise;
-  startAmbience();
+  voiceOutputReady = false;
+  preRingbackPcm = [];
+  preRingbackBytes = 0;
+  // Prewarm Live during ringback; hold PCM until ringback ends.
   ws = new WebSocket('wss://api.openai.com/v1/live/sessions', { headers: { Authorization: `Bearer ${apiKey}` } });
-  ws.on('open', () => ws.send(JSON.stringify({ type: 'session.start', event_id: 'mabel_start', session: { model: 'gpt-live-1', instructions: `${persona}\n\n${styleGuide}\n\n${pacingAdjustment}\n\n${volumeDeliveryGuide}\n\n${voiceTimbreGuide}`, audio: { format: { type: 'audio/pcm', rate: 24000 }, output: { voice: 'sage' } }, delegation: { type: 'client' } } })));
+  ws.on('open', () => ws.send(JSON.stringify({ type: 'session.start', event_id: 'mabel_start', session: { model: 'gpt-live-1', instructions: persona, audio: { format: { type: 'audio/pcm', rate: 24000 }, output: { voice: 'sage' } }, delegation: { type: 'client' } } })));
   ws.on('message', (message) => { try { handleEvent(JSON.parse(message.toString())); } catch (error) { log('invalid Live event', { error: error.message }); } });
   ws.on('error', (error) => log('WebSocket error', { error: error.message }));
   ws.on('close', (code, reason) => { if (!closing) log('disconnect before session.closed', { code, reason: reason.toString() }); });
   recorder = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'avfoundation', '-i', input, '-ac', '1', '-ar', '24000', '-f', 's16le', '-'], { stdio: ['ignore', 'pipe', 'inherit'] });
   recorder.stdout.on('data', (chunk) => { const processed = processInputAudio(chunk); if (processed && liveStarted && ws.readyState === WebSocket.OPEN) { inputSentBytes += processed.length; ws.send(JSON.stringify({ type: 'session.input_audio.append', audio: processed.toString('base64') })); } });
   recorder.on('error', (error) => log('recorder error', { error: error.message }));
+  await ringbackPromise;
+  startAmbience();
+  releasePreRingbackAudio();
 }
 function cleanup() {
   if (cleanupPromise) return cleanupPromise;

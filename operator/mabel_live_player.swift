@@ -6,10 +6,15 @@ let sampleRate = 24_000.0
 let channels: AVAudioChannelCount = 1
 let bytesPerFrame = 2
 let readSize = 4_800
-let startupPrebufferBytes = 72_000 // 1.5 seconds at 24 kHz mono PCM16
-let maximumPrebufferBytes = readSize * 24 // 2.4 seconds adaptive ceiling
-let ringCapacityBytes = Int(sampleRate) * bytesPerFrame * 20
 let commandArguments = CommandLine.arguments
+let requestedPrebufferMs: Int = {
+    guard let flagIndex = commandArguments.firstIndex(of: "--prebuffer-ms"), flagIndex + 1 < commandArguments.count else { return 1500 }
+    return max(100, Int(commandArguments[flagIndex + 1]) ?? 1500)
+}()
+let startupPrebufferBytes = max(readSize, Int(sampleRate) * bytesPerFrame * requestedPrebufferMs / 1000)
+let maximumPrebufferBytes = readSize * 50 // 5.0 seconds adaptive ceiling
+let lowWaterBytes = readSize * 3 // 300 ms: rebuffer before an audible underrun
+let ringCapacityBytes = Int(sampleRate) * bytesPerFrame * 20
 let telephoneEQEnabled = commandArguments.contains("--telephone-eq")
 let masterGainDb: Double = {
     guard let flagIndex = commandArguments.firstIndex(of: "--master-gain-db"), flagIndex + 1 < commandArguments.count else { return 0 }
@@ -129,6 +134,7 @@ final class PCMByteRing {
     private var used = 0
     private let lock = NSLock()
     private var underflowed = false
+    private var lowWaterRequested = false
     private(set) var underrunCount = 0
     private(set) var underrunBytes = 0
 
@@ -230,6 +236,9 @@ final class PCMByteRing {
             }
             readIndex = (readIndex + count) % storage.count
             used -= count
+            if active && used > 0 && used <= lowWaterBytes {
+                lowWaterRequested = true
+            }
             checkInvariants("FIFO read after")
         }
         if count < bytes {
@@ -250,6 +259,14 @@ final class PCMByteRing {
         defer { lock.unlock() }
         let value = underflowed
         underflowed = false
+        return value
+    }
+
+    func takeLowWaterRequested() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let value = lowWaterRequested
+        lowWaterRequested = false
         return value
     }
 }
@@ -378,7 +395,15 @@ while let data = try? FileHandle.standardInput.read(upToCount: readSize), !data.
     }
     if chunk.isEmpty { continue }
     ring.append(chunk)
-    if isPlaybackActive() && ring.takeUnderflowed() {
+    if ring.takeLowWaterRequested() {
+        targetPrebufferBytes = min(maximumPrebufferBytes, targetPrebufferBytes + readSize * 2)
+        // Low-water is advisory. Keep playing while data remains available;
+        // stopping here would deliberately inject silence and create the gap
+        // this guard is intended to prevent. A genuine underrun below is the
+        // point at which playback pauses and refills.
+        fputs("FIFO low-water advisory; increasing next rebuffer target to \(targetPrebufferBytes / readSize * 100) ms\n", stderr)
+    }
+    if ring.takeUnderflowed() {
         targetPrebufferBytes = min(maximumPrebufferBytes, targetPrebufferBytes + readSize * 2)
         setPlaybackActive(false)
         fputs("FIFO underrun; increasing prebuffer to \(targetPrebufferBytes / readSize * 100) ms\n", stderr)
