@@ -7,6 +7,9 @@ state/*.pem
 state/mabel-song-facts.json
 state/
 
+# Local Mabel bridge logs; may contain call transcripts and diagnostics.
+operator/.runtime-logs/
+
 .DS_Store
 
 # Pico device-only credentials.

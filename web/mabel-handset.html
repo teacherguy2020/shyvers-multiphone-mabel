@@ -69,6 +69,7 @@ let callMode = null;
 let currentNormalMode = false;
 let normalFinalResponsePending = false;
 let normalPendingNumber = null;
+let normalPendingNumberPhrase = '';
 let normalAcknowledgmentRequested = false;
 let normalSelectionStarted = false;
 let lastCallerTranscript = '';
@@ -91,7 +92,6 @@ const liveVoiceOutputGain = 1.78275 * 1.5 * Math.pow(10, 10 / 20);
 let liveTranscriptBuffer = '';
 let liveTranscriptTimer = null;
 let liveMabelLineOpen = false;
-let liveConfirmationStyleIndex = 0;
 let liveConfirmationRetryTimer = null;
 let liveConfirmationRetryFallbackTimer = null;
 let liveConfirmationResponsePending = false;
@@ -100,7 +100,7 @@ const affectionateAddressInstruction = 'Use affectionate forms of address sparin
 
 const instructions = `You are Mabel, a 22-year-old 1940s telephone operator and record spinner for Multiphone in Seattle, Washington. English is mandatory: speak ONLY American English in every response, even if the caller speaks another language or the transcription is uncertain. Never answer in Portuguese, Spanish, French, or any other language. Use a bright, youthful, energetic, lightly sassy American delivery. Affectionate forms of address are occasional seasoning only: most replies should have none, never use one in consecutive replies, and use at most one every few turns. This is the VIP line and this call is already off-script. Begin with exactly this English greeting: "Thanks for calling the VIP line—Mabel here at Multiphone! Whaddya wanna hear?" Do not translate, paraphrase, or add anything before that greeting. Do not explain available options. You may use the bounded music tools for albums, artists, playlists, mixes, and now-playing information. After a successful album, artist, playlist, or mix action, briefly confirm, say a varied goodbye, and stop asking questions. Now-playing can continue the conversation. For a numbered Multiphone request, repeat the recognized number first and then give a very brief, clipped record-room acknowledgment such as "Lemme grab that off the shelf." or "Hold the line, I’m getting that record." Keep this acknowledgment urgent and workmanlike, not excited or celebratory; do not use a pet name, exclamation point, joke, or follow-up question. Never invent catalog or playback results; use only tool output. The direct song-transmission line serves Clem's Place, a lively bar in Seattle; mention Clem's Place occasionally when natural, but do not force it into every reply. If the caller says goodbye, give a brief warm goodbye and stop.`;
 const normalInstructions = `You are Mabel, a 22-year-old 1940s telephone operator and record spinner for Multiphone in Seattle, Washington. Speak ONLY American English. Be bright, energetic, brisk, lightly sassy, humorous, and professionally demure. Use affectionate names sparingly: most replies should have none, never use one in consecutive replies, and use at most one every few turns. This is the normal Multiphone line, not the VIP line and not off-script. Begin with exactly a short greeting such as "Multiphone! Mabel here—hope everyone’s having a great time at Clem’s. What number?" Always begin with Multiphone, identify Mabel, acknowledge Clem's Place, and ask for a valid song number from 1 through 170. For a numbered request, repeat the recognized number first and then give a very brief, clipped record-room acknowledgment such as "Lemme grab that off the shelf." or "Hold the line, I’m getting that record." Keep it urgent and workmanlike, not excited or celebratory; do not use a pet name, exclamation point, joke, or follow-up question in that acknowledgment. Use only the validated numbered tool; do not use off-script music tools or invent titles, artists, or playback results. The direct song-transmission line serves Clem's Place, a lively bar in Seattle; mention Clem's Place in the opening and occasionally thereafter when natural, but do not force it into every reply. After the successful record request, announce the song information when supplied and say a brief goodbye; do not keep listening. If the caller says goodbye, reply warmly and end the call.`;
-const liveNormalInstructions = `You are Mabel, a young American telephone operator working at a central music station in Seattle in the 1940s. Speak only clear American English in a youthful, light, high-register telephone voice with authentic 1940s diction and natural period phrasing. This is the normal numbered Multiphone line serving Clem’s Place. Keep exchanges concise, conversational, and varied. Ask for a number from 1 through 170 and wait for the local application to validate it. The local application is authoritative: never invent or infer a title, artist, queue position, credits, playback state, success, or error. When the local application supplies a confirmation, repeat only its supplied digit words in the same order and end with an unmistakable high-rising yes-or-no question. When the local application supplies a result, use only those supplied facts. You may express approval of a selection in your own words, but vary the wording and do not rely on a repeated catchphrase. Keep reactions natural and not overly energetic. If the caller explicitly says “go off-script” or “I'm a VIP,” the local application will switch this call into the expanded private music service; acknowledge that change and follow only the authoritative results it supplies. Maintain a consistent conversational volume throughout the call. Do not become louder, more projected, or more animated at the end. Final acknowledgments and goodbyes should be spoken at the same volume and vocal intensity as the preceding conversation, as a quiet telephone goodbye to one person rather than an announcement. Do not emphasize or project the final words. Stop speaking immediately when the caller interrupts.`;
+const liveNormalInstructions = `You are Mabel, a young American telephone operator working at a central music station in Seattle in the 1940s. Speak only clear American English in a youthful, light, high-register telephone voice with authentic 1940s diction and natural period phrasing. This is the normal numbered Multiphone line serving Clem’s Place. Keep exchanges concise, conversational, and varied. Ask for a number from 1 through 170 and wait for the local application to validate it. The local application is authoritative: never invent or infer a title, artist, queue position, credits, playback state, success, or error. When the local application supplies a confirmation phrase, repeat that phrase exactly once, then immediately add one brief, natural confirmation tag such as “right?”, “yes?”, “yeah?”, “did I hear that right?”, or “is that correct?”. Vary the tag naturally. Do not add a lead-in, repeat the number, convert it into digit-by-digit words, or require the number phrase to be the final words. When the local application supplies a result, use only those supplied facts. You may express approval of a selection in your own words, but vary the wording and do not rely on a repeated catchphrase. Keep reactions natural and not overly energetic. If the caller explicitly says “go off-script” or “I'm a VIP,” the local application will switch this call into the expanded private music service; acknowledge that change and follow only the authoritative results it supplies. Maintain a consistent conversational volume throughout the call. Do not become louder, more projected, or more animated at the end. Final acknowledgments and goodbyes should be spoken at the same volume and vocal intensity as the preceding conversation, as a quiet telephone goodbye to one person rather than an announcement. Do not emphasize or project the final words. Stop speaking immediately when the caller interrupts.`;
 const tools = [
   { type: 'function', name: 'submit_multiphone_number', description: 'Queue a valid Multiphone song number from 1 through 170.', parameters: { type: 'object', properties: { number: { type: 'integer', minimum: 1, maximum: 170 } }, required: ['number'], additionalProperties: false } },
   { type: 'function', name: 'offscript_play_album', description: 'Play a matching album.', parameters: { type: 'object', properties: { album: { type: 'string', minLength: 1, maxLength: 200 } }, required: ['album'], additionalProperties: false } },
@@ -297,31 +297,23 @@ function liveNumberWords(number) {
   const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
   return String(number).split('').map(digit => words[Number(digit)]).join(' ');
 }
-function requestLiveConfirmation(number) {
+function requestLiveConfirmation(number, phrase = normalPendingNumberPhrase) {
   if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
   liveConfirmationRetryTimer = null;
   if (liveConfirmationRetryFallbackTimer) clearTimeout(liveConfirmationRetryFallbackTimer);
   liveConfirmationRetryFallbackTimer = null;
   liveConfirmationResponsePending = true;
   liveConfirmationResponseAudioStarted = false;
-  const leadIns = [
-    'I don’t want to grab the wrong one, so just confirming',
-    'Let me make sure I have the right record before I fetch it—just confirming',
-    'It’s a bit noisy here, so just confirming',
-    'Before I pull that one from the cabinet, just confirming',
-  ];
-  const spokenDigits = liveNumberWords(number);
-  const leadIn = leadIns[liveConfirmationStyleIndex % leadIns.length];
-  liveConfirmationStyleIndex += 1;
+  const spokenPhrase = String(phrase || liveNumberWords(number)).trim().replace(/^(?:the\s+)?(?:record\s+)?number\s+/i, '');
   liveSend({ type: 'response.cancel', event_id: `mabel_web_confirmation_cancel_${Date.now()}` });
-  sendLiveCommentary(`The local application supplied the exact confirmation. Say one sentence only: “${leadIn}, ${spokenDigits}?” Say the digit words only once, at the end of the sentence. Do not repeat or lead with the digits, do not say “you said ${spokenDigits},” and do not add a second version of the number. End with a clearly audible high-rising yes-or-no question on the final digit. Do not say or invent any other number.`);
+  sendLiveCommentary(`The local application supplied this number phrase: “${spokenPhrase}”. Say that number phrase exactly once, then immediately add one brief, natural confirmation tag such as “right?”, “yes?”, “yeah?”, “did I hear that right?”, “is that correct?”, or “have I got that right?”. Vary the tag naturally. Do not add a lead-in, repeat the number, convert it into digit-by-digit words, or invent another number. The number phrase must come first, but it does not need to be the final words.`);
   const scheduleRetry = (waitMs = 1800) => {
     if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
     liveConfirmationRetryTimer = setTimeout(() => {
       liveConfirmationRetryTimer = null;
       if (!currentNormalMode || normalFinalResponsePending || normalPendingNumber !== number) return;
       setStatus('Mabel is waiting for confirmation…');
-      requestLiveConfirmation(number);
+      requestLiveConfirmation(number, normalPendingNumberPhrase);
     }, waitMs);
   };
   const forceAt = Date.now() + 10000;
@@ -354,6 +346,7 @@ async function handleLiveTranscript(text) {
   if (!liveOffScript && liveOffScriptTriggerPattern.test(text) && !normalFinalResponsePending) {
     liveOffScript = true;
     normalPendingNumber = null;
+    normalPendingNumberPhrase = '';
     normalAcknowledgmentRequested = false;
     sendLiveCommentary('The caller explicitly invoked the private off-script service. Acknowledge that briefly in period-appropriate language, then ask what music they would like. Do not mention software, tools, or technical details. Remain in VIP mode.');
     return;
@@ -368,9 +361,10 @@ async function handleLiveTranscript(text) {
   if (normalPendingNumber !== null) {
     if (candidate !== null && candidate !== normalPendingNumber) {
       normalPendingNumber = candidate;
-      requestLiveConfirmation(candidate);
+      normalPendingNumberPhrase = text;
+      requestLiveConfirmation(candidate, text);
     } else if (liveNegative(text)) {
-      requestLiveConfirmation(normalPendingNumber);
+      requestLiveConfirmation(normalPendingNumber, normalPendingNumberPhrase);
     } else if (liveAffirmative(text)) {
       if (liveConfirmationRetryTimer) clearTimeout(liveConfirmationRetryTimer);
       liveConfirmationRetryTimer = null;
@@ -381,33 +375,46 @@ async function handleLiveTranscript(text) {
       await processLiveNormalSelection(normalPendingNumber);
     } else if (candidate !== null) {
       normalPendingNumber = candidate;
-      requestLiveConfirmation(candidate);
+      normalPendingNumberPhrase = text;
+      requestLiveConfirmation(candidate, text);
     }
     return;
   }
   if (candidate !== null) {
     normalPendingNumber = candidate;
-    requestLiveConfirmation(candidate);
+    normalPendingNumberPhrase = text;
+    requestLiveConfirmation(candidate, text);
   }
 }
 function liveNormalSelectionInstructions(selection, outcome) {
-  const trackName = [outcome?.title, outcome?.artist].filter(value => String(value || '').trim()).join(' by ');
-  const result = JSON.stringify(outcome || selection || {});
-  const track = trackName ? ` State the supplied title and artist exactly as “${trackName}”.` : '';
-  let timing = 'Use only the supplied queue and playback facts.';
+  const customerFacts = {};
+  const title = String(outcome?.title || '').trim();
+  const artist = String(outcome?.artist || '').trim();
+  if (title) customerFacts.title = title;
+  if (artist) customerFacts.artist = artist;
   if (outcome?.queuedBehindJukebox) {
-    const total = Number(outcome.jukeboxQueueLength) || 1;
-    const spins = Math.max(1, total - 1);
-    timing = `Say that it was added to the records waiting on your desk for Clem’s Place and will come up in exactly ${spins} spin${spins === 1 ? '' : 's'} or so. Do not change that number.`;
+    const total = Number(outcome.jukeboxQueueLength);
+    if (Number.isFinite(total)) customerFacts.spinsAhead = Math.max(1, total - 1);
   } else if (outcome?.playbackStarted || outcome?.playbackDeferred) {
-    timing = 'Say that the record started playing immediately.';
+    customerFacts.spinsAhead = 0;
+  } else {
+    const queuePosition = Number(outcome?.queuePosition);
+    if (Number.isFinite(queuePosition)) customerFacts.queuePosition = Math.max(1, queuePosition);
   }
-  return `The local Multiphone application returned this authoritative result: ${result}. The request succeeded.${track} ${timing} Give at most one brief, natural, varied approval in your own words if one fits; fold it directly into the surrounding sentence or clause with no pause before or after it, and do not make it a separate performance turn or repeat a catchphrase. Continue directly into a brief goodbye of your choice in the same paragraph and uninterrupted delivery, containing “bye” or “goodbye.” Keep the reaction and goodbye at the same conversational volume and intensity as the preceding speech. Do not become louder, projected, or theatrical, and do not ask another question.`;
+  const trackName = [customerFacts.title, customerFacts.artist].filter(Boolean).join(' by ');
+  const result = JSON.stringify(customerFacts);
+  const track = trackName ? ` State the supplied title and artist exactly as “${trackName}”.` : '';
+  let timing = 'Do not invent a queue or playback fact.';
+  if (customerFacts.spinsAhead === 0) timing = 'Say naturally that the record is starting now.';
+  else if (Number.isFinite(customerFacts.spinsAhead)) timing = `Say naturally that it will be coming up in about ${customerFacts.spinsAhead} spin${customerFacts.spinsAhead === 1 ? '' : 's'}. Do not expose technical queue terminology or change that number.`;
+  else if (Number.isFinite(customerFacts.queuePosition)) timing = `Use the supplied queue position naturally as position ${customerFacts.queuePosition}; do not expose technical queue terminology.`;
+  return `The local Multiphone application returned only these allowlisted customer-facing facts: ${result}. The request succeeded.${track} ${timing} Never mention or infer any other application fields. Give at most one brief, natural, varied approval in your own words if one fits; fold it directly into the surrounding sentence or clause with no pause before or after it, and do not make it a separate performance turn or repeat a catchphrase. Continue directly into a brief goodbye of your choice in the same paragraph and uninterrupted delivery, containing “bye” or “goodbye.” Keep the reaction and goodbye at the same conversational volume and intensity as the preceding speech. Do not become louder, projected, or theatrical, and do not ask another question.`;
 }
 async function processLiveNormalSelection(number) {
   if (normalSelectionStarted || !currentNormalMode) return;
   normalSelectionStarted = true;
   normalPendingNumber = null;
+  normalPendingNumberPhrase = '';
   try {
     const selectionPromise = api('/shyvers/response', { sessionId: mabelSessionId, number, suppressSpeech: true, deferPlayback: true });
     const footstepsPromise = playLocalEffect('footsteps');
@@ -456,7 +463,7 @@ function handleLiveEvent(event) {
           liveConfirmationRetryTimer = null;
           if (!currentNormalMode || normalFinalResponsePending || normalPendingNumber === null) return;
           setStatus('Mabel is waiting for confirmation…');
-          requestLiveConfirmation(normalPendingNumber);
+          requestLiveConfirmation(normalPendingNumber, normalPendingNumberPhrase);
         }, 1800);
       };
       waitForOutputDrain();
@@ -545,6 +552,7 @@ function requestNormalAcknowledgment(text) {
   // Wait for the unit after a bare tens word, e.g. “ninety-six”.
   if (/\b(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s*$/i.test(value)) return false;
   normalPendingNumber = number;
+  normalPendingNumberPhrase = value;
   normalAcknowledgmentRequested = true;
   const acknowledgment = `${number}, ${['lemme grab that off the shelf.', 'hold the line, I’m getting that record.', 'I’ll fetch that off the shelf.'][Math.floor(Math.random() * 3)]}`;
   send({ type: 'response.create', response: { tool_choice: 'none', instructions: `Say exactly this brief acknowledgment in your lively Mabel voice: "${acknowledgment}" Do not call a tool, ask a question, or add anything else.` } });
@@ -555,6 +563,7 @@ async function processNormalSelection(number) {
   if (normalSelectionStarted || !currentNormalMode) return;
   normalSelectionStarted = true;
   normalPendingNumber = null;
+  normalPendingNumberPhrase = '';
   normalAcknowledgmentRequested = false;
   try {
     const selectionPromise = api('/shyvers/response', { sessionId: mabelSessionId, number, suppressSpeech: true, deferPlayback: true });
@@ -815,7 +824,7 @@ async function endCall() {
   const wasVoiceCall = callMode === 'voice';
   if (wasVoiceCall) await playLocalEffect('hangup');
   finishLiveMabelLine();
-  micStream = null; pc = null; events = null; liveSocket = null; liveInputSource = null; liveInputProcessor = null; liveInputMute = null; liveInputContext = null; liveOutputContext = null; liveOutputTime = 0; liveTranscriptBuffer = ''; liveOffScript = false; mabelSessionId = null; textSessionId = null; callMode = null; currentNormalMode = false; normalFinalResponsePending = false; normalPendingNumber = null; normalAcknowledgmentRequested = false; normalSelectionStarted = false; lastCallerTranscript = ''; normalTranscriptBuffer = ''; initialRingbackPromise = null;
+  micStream = null; pc = null; events = null; liveSocket = null; liveInputSource = null; liveInputProcessor = null; liveInputMute = null; liveInputContext = null; liveOutputContext = null; liveOutputTime = 0; liveTranscriptBuffer = ''; liveOffScript = false; mabelSessionId = null; textSessionId = null; callMode = null; currentNormalMode = false; normalFinalResponsePending = false; normalPendingNumber = null; normalPendingNumberPhrase = ''; normalAcknowledgmentRequested = false; normalSelectionStarted = false; lastCallerTranscript = ''; normalTranscriptBuffer = ''; initialRingbackPromise = null;
   mabelGoodbyeDetected = false; responseAudioDone = false;
   textInput.disabled = true;
   textSend.disabled = true;

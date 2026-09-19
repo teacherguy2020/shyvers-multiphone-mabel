@@ -11,8 +11,9 @@ let requestedPrebufferMs: Int = {
     guard let flagIndex = commandArguments.firstIndex(of: "--prebuffer-ms"), flagIndex + 1 < commandArguments.count else { return 1500 }
     return max(100, Int(commandArguments[flagIndex + 1]) ?? 1500)
 }()
-let maximumPrebufferBytes = readSize * 5 // 500 ms hard recovery/startup ceiling for now
-let startupPrebufferBytes = min(maximumPrebufferBytes, max(readSize, Int(sampleRate) * bytesPerFrame * requestedPrebufferMs / 1000))
+let startupMaximumPrebufferBytes = readSize * 5 // Keep ordinary startup at or below 500 ms.
+let recoveryMaximumPrebufferBytes = readSize * 7 // Allow modest recovery headroom after a real underrun.
+let startupPrebufferBytes = min(startupMaximumPrebufferBytes, max(readSize, Int(sampleRate) * bytesPerFrame * requestedPrebufferMs / 1000))
 let lowWaterBytes = readSize * 3 // 300 ms: rebuffer before an audible underrun
 let ringCapacityBytes = Int(sampleRate) * bytesPerFrame * 20
 let telephoneEQEnabled = commandArguments.contains("--telephone-eq")
@@ -431,7 +432,7 @@ while let data = try? FileHandle.standardInput.read(upToCount: readSize), !data.
     }
     if ring.takeUnderflowed() {
         let depth = ring.availableBytes
-        targetPrebufferBytes = min(maximumPrebufferBytes, targetPrebufferBytes + targetStepBytes)
+        targetPrebufferBytes = min(recoveryMaximumPrebufferBytes, targetPrebufferBytes + targetStepBytes)
         lastUnderrunAt = Date()
         lastTargetDecayAt = Date()
         setPlaybackActive(false)

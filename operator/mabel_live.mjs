@@ -31,6 +31,7 @@ function boundedMilliseconds(value, fallback) {
 const inputQuietMs = boundedMilliseconds(args.get('input-quiet-ms'), lowLatencyExperimental ? 275 : 650);
 const numberAccumulationMs = boundedMilliseconds(args.get('number-accumulation-ms'), lowLatencyExperimental ? 850 : 1100);
 const numberGuardMs = boundedMilliseconds(args.get('number-guard-ms'), lowLatencyExperimental ? 200 : 250);
+const incompleteNumberMaxWaitMs = boundedMilliseconds(args.get('incomplete-number-max-wait-ms'), lowLatencyExperimental ? 1800 : 2200);
 const freeConversationQuietMs = boundedMilliseconds(args.get('free-conversation-quiet-ms'), Math.max(inputQuietMs, 900));
 const defaultPrebufferMs = boundedMilliseconds(args.get('prebuffer-ms'), lowLatencyExperimental ? 325 : 1500);
 const confirmationPrebufferMs = boundedMilliseconds(args.get('confirmation-prebuffer-ms'), lowLatencyExperimental ? 325 : 1000);
@@ -115,7 +116,7 @@ Routine exchanges should be short and personable. Brief natural backchannels are
 
 The local Multiphone application is authoritative for record numbers, titles, artists, confirmations, credits, queue state, playback state, and service results. Never invent, infer, round, substitute, or reinterpret those facts. Valid numbered records are 1 through ${maxNumber}.
 
-Normal mode is a deterministic numbered-request flow. When the patron gives a possible record number, do not independently repeat, confirm, acknowledge, reinterpret, or act on it. Wait silently while the local application evaluates it. When the application supplies confirmation wording, repeat the exact supplied number phrase once, without converting it into digit-by-digit words or adding a lead-in. Ask confirmations naturally as yes-or-no questions with a clear rising inflection on the final word, without exaggeration. If the patron corrects a number, wait for the local application to supply the new confirmation.
+Normal mode is a deterministic numbered-request flow. When the patron gives a possible record number, do not independently repeat, confirm, acknowledge, reinterpret, or act on it. Wait silently while the local application evaluates it. When the application supplies confirmation wording, repeat the exact supplied number phrase once, then immediately add one brief, natural confirmation tag such as “right?”, “yes?”, “yeah?”, “did I hear that right?”, or “is that correct?”. Vary the tag naturally. Do not add a lead-in, repeat the number, convert it into digit-by-digit words, or require the number to be the final words. If the patron corrects a number, wait for the local application to supply the new confirmation.
 
 If the patron explicitly says “go off-script” or “I'm a VIP,” enter the private music service. The local application performs every VIP action and supplies the authoritative result. Never invent or imply a title, artist, queue state, playback state, credits, or success. Report only what the application establishes.
 
@@ -273,7 +274,7 @@ function log(message, details = {}) {
 function playEffect(name, requestedDurationSec = null) {
   const file = path.join(soundsDir, soundFiles[name]);
   if (!existsSync(file)) { log('sound effect missing', { name, file }); return Promise.resolve(); }
-  const volume = name === 'ringback' ? '0.08125' : name === 'footsteps' ? '0.0875' : '0.375';
+  const volume = name === 'ringback' ? '0.08125' : name === 'footsteps' ? '0.04375' : '0.375';
   return new Promise((resolve) => {
     let playback;
     try {
@@ -363,8 +364,8 @@ async function endServiceSession() {
   }
 }
 function digits(number) { return String(number).split('').join('-'); }
-const spokenNumberWords = new Set(['zero', 'oh', 'naught', 'one', 'two', 'tree', 'free', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'and']);
-const numberContextWords = new Set(['number', 'record', 'the', 'please', 'i', 'want', 'would', 'like', 'give', 'me', 'get', 'that', 'what', 'did', 'say', 'said', 'mm', 'hmm', 'um', 'uh', 'how', 'about', 'can', 'you']);
+const spokenNumberWords = new Set(['zero', 'o', 'oh', 'naught', 'one', 'two', 'tree', 'free', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'and']);
+const numberContextWords = new Set(['number', 'record', 'the', 'a', 'an', 'please', 'i', 'want', 'would', 'like', 'give', 'me', 'get', 'that', 'what', 'did', 'say', 'said', 'mm', 'hmm', 'um', 'uh', 'how', 'about', 'can', 'you']);
 function isPotentialRecordNumberPhrase(text) {
   const tokens = String(text || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').trim().split(/\s+/).filter(Boolean);
   if (!tokens.length) return false;
@@ -382,7 +383,7 @@ function numberFromText(text) {
   const units = { one: 1, two: 2, three: 3, tree: 3, free: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
   const small = { ...units, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
   const tens = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
-  const digitWords = { zero: 0, oh: 0, naught: 0, ...units };
+  const digitWords = { zero: 0, o: 0, oh: 0, naught: 0, ...units };
   const digitTokens = value.replace(/-/g, ' ').split(/\s+/).filter(Boolean);
   for (let i = 0; i < digitTokens.length; i += 1) {
     let j = i;
@@ -399,6 +400,19 @@ function numberFromText(text) {
   }
   const tokens = value.replace(/-/g, ' ').split(/\s+/).filter(Boolean);
   for (let i = 0; i < tokens.length; i += 1) {
+    if ((tokens[i] === 'a' || tokens[i] === 'an') && tokens[i + 1] === 'hundred') {
+      let number = 100;
+      let j = i + 2;
+      if (tokens[j] === 'and') j += 1;
+      if (tens[tokens[j]] !== undefined) {
+        number += tens[tokens[j]];
+        j += 1;
+        if (units[tokens[j]] !== undefined) number += units[tokens[j]];
+      } else if (small[tokens[j]] !== undefined) {
+        number += small[tokens[j]];
+      }
+      if (number >= 1 && number <= maxNumber) return number;
+    }
     if (tokens[i] === 'and') continue;
     if (small[tokens[i]] === undefined && tens[tokens[i]] === undefined) continue;
     let number = small[tokens[i]] ?? tens[tokens[i]];
@@ -444,10 +458,14 @@ function spokenNumberStatus(text) {
   const words = numericWords.filter((token) => token !== 'and');
   const digitForm = words.some((token) => /^\d+$/.test(token));
   const ambiguousUnitPrefix = words.length === 1 && ['one', 'two', 'three', 'tree', 'free', 'four', 'five', 'six', 'seven', 'eight', 'nine'].includes(words[0]);
+  const ambiguousTensPrefix = ['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'].includes(words.at(-1));
+  // Keep "one oh..." / "one zero..." open until the final digit arrives.
+  // Otherwise "one oh nine" can be finalized prematurely as 10.
+  const ambiguousZeroPrefix = words.length >= 2 && ['zero', 'o', 'oh', 'naught'].includes(words.at(-1));
   const incompleteHundred = words.at(-1) === 'hundred';
   return {
     potential: true,
-    complete: digitForm || (!ambiguousUnitPrefix && !incompleteHundred),
+    complete: digitForm || (!ambiguousUnitPrefix && !ambiguousTensPrefix && !ambiguousZeroPrefix && !incompleteHundred),
     number,
   };
 }
@@ -579,10 +597,10 @@ function requestConfirmation(number, phrase = pendingNumberPhrase) {
   streamPrebufferMs = confirmationPrebufferMs;
   confirmationResponsePending = true;
   confirmationResponseAudioStarted = false;
-  const spokenPhrase = String(phrase || confirmationDigits(number)).trim();
+  const spokenPhrase = String(phrase || confirmationDigits(number)).trim().replace(/^(?:the\s+)?(?:record\s+)?number\s+/i, '');
   pendingNumberPhrase = spokenPhrase;
-  log('confirmation requested', { number, spokenPhrase, questionIntonation: 'high-rising-final-word' });
-  announce(`The local application supplied this exact confirmation phrase: “${spokenPhrase}?” Repeat that phrase exactly once, without converting it into digit-by-digit words and without adding a lead-in, explanation, or extra number. Ask it naturally as a yes-or-no question with a clear upward inflection on the final word. Keep the same relaxed conversational pace and volume as the rest of the call.`);
+  log('confirmation requested', { number, spokenPhrase, confirmationStyle: 'phrase-plus-varied-tag' });
+  announce(`The local application supplied this number phrase: “${spokenPhrase}”. Say that number phrase exactly once, then immediately add one brief, natural confirmation tag such as “right?”, “yes?”, “yeah?”, “did I hear that right?”, “is that correct?”, or “have I got that right?”. Vary the tag naturally. Do not add a lead-in, repeat the number, convert it into digit-by-digit words, or invent another number. The number phrase must come first, but it does not need to be the final words. Keep the same relaxed conversational pace and volume as the rest of the call.`);
   armConfirmationRetryFallback(number);
 }
 function announce(content) {
@@ -1155,7 +1173,7 @@ function queueTranscriptDelta(delta) {
   clearTimeout(transcriptTimer);
   const plan = transcriptFinalizationPlan(transcript);
   const quietMs = plan.guardMs;
-  transcriptTimer = setTimeout(() => {
+  const finalize = () => {
     const complete = transcript;
     const firstDeltaAt = inputTranscriptFirstDeltaAt;
     const lastDeltaAt = inputTranscriptLastDeltaAt;
@@ -1191,7 +1209,36 @@ function queueTranscriptDelta(delta) {
       lastDeltaToFinalizedMs: lastDeltaAt ? lastInputTranscriptFinalizedAt - lastDeltaAt : null,
     });
     handleTranscript(complete).catch((error) => log('transcript handling error', { error: error.message }));
+  };
+  transcriptTimer = setTimeout(() => {
+    const status = spokenNumberStatus(transcript);
+    const ageMs = inputTranscriptFirstDeltaAt ? Date.now() - inputTranscriptFirstDeltaAt : 0;
+    if (plan.reason === 'timeout' && status.potential && !status.complete && ageMs < incompleteNumberMaxWaitMs) {
+      const retryMs = Math.min(numberAccumulationMs, incompleteNumberMaxWaitMs - ageMs);
+      if (latencyDiagnostics) log('incomplete number prefix retained', { text: transcript.trim(), ageMs, retryMs });
+      transcriptTimer = setTimeout(finalize, retryMs);
+      return;
+    }
+    finalize();
   }, quietMs);
+}
+function customerFacingSelectionFacts(outcome) {
+  const facts = {};
+  const title = String(outcome?.title || '').trim();
+  const artist = String(outcome?.artist || '').trim();
+  if (title) facts.title = title;
+  if (artist) facts.artist = artist;
+
+  if (outcome?.queuedBehindJukebox) {
+    const total = Number(outcome.jukeboxQueueLength);
+    if (Number.isFinite(total)) facts.spinsAhead = Math.max(1, total - 1);
+  } else if (outcome?.playbackStarted || outcome?.playbackDeferred) {
+    facts.spinsAhead = 0;
+  } else {
+    const queuePosition = Number(outcome?.queuePosition);
+    if (Number.isFinite(queuePosition)) facts.queuePosition = Math.max(1, queuePosition);
+  }
+  return facts;
 }
 async function submitSelection(number) {
   selectionInProgress = true; awaitingConfirmation = false; staleLiveAudioDiscardLogged = false;
@@ -1208,20 +1255,20 @@ async function submitSelection(number) {
     });
     let outcome = result?.result && typeof result.result === 'object' ? result.result : result;
     log('deterministic selection result', { number, actionMs: Date.now() - actionStarted, outcome });
-    const trackName = [outcome.title, outcome.artist].filter((value) => String(value || '').trim()).join(' by ');
-    let finalInstruction = `The caller confirmed Multiphone number ${number}. The application completed that exact request. ${trackName ? `Say exactly the supplied song title and artist: “${trackName}”. ` : ''}`;
-    if (outcome.queuedBehindJukebox) {
-      const totalJukeboxRecords = Number(outcome.jukeboxQueueLength) || 1;
-      const spinsAway = Math.max(1, totalJukeboxRecords - 1);
-      finalInstruction += `Say that the record was added to the others waiting on your desk for Clem's Place and will be coming up in ${spinsAway} spin${spinsAway === 1 ? '' : 's'} or so. Do not invent or change that number. `;
-    } else if (outcome.playbackStarted) {
-      finalInstruction += 'Say that the record started playing immediately. ';
-    } else if (Number.isFinite(Number(outcome.queueLength))) {
-      finalInstruction += `Say that it is in the queue at the supplied position, using only the application result: ${JSON.stringify(outcome)}. `;
+    const customerFacts = customerFacingSelectionFacts(outcome);
+    const trackName = [customerFacts.title, customerFacts.artist].filter(Boolean).join(' by ');
+    const factsJson = JSON.stringify(customerFacts);
+    let finalInstruction = `The caller confirmed Multiphone number ${number}. The customer-facing application facts are ${factsJson}. ${trackName ? `Say exactly the supplied song title and artist: “${trackName}”. ` : ''}`;
+    if (customerFacts.spinsAhead === 0) {
+      finalInstruction += 'Say naturally that the record is starting now. ';
+    } else if (Number.isFinite(customerFacts.spinsAhead)) {
+      finalInstruction += `Say naturally that it will be coming up in about ${customerFacts.spinsAhead} spin${customerFacts.spinsAhead === 1 ? '' : 's'}. Do not expose technical queue terminology or change that number. `;
+    } else if (Number.isFinite(customerFacts.queuePosition)) {
+      finalInstruction += `Use the supplied queue position naturally as position ${customerFacts.queuePosition}; do not expose technical queue terminology. `;
     } else {
-      finalInstruction += `Briefly summarize the supplied application result using only these facts: ${JSON.stringify(outcome)}. `;
+      finalInstruction += 'State only the supplied title and artist, without inventing a queue or playback fact. ';
     }
-    finalInstruction += 'Give the result naturally in one compact but complete paragraph. Include the supplied title, artist, and queue or playback fact; do not truncate the result just to finish quickly. You may add at most one short, understated period-appropriate reaction. If a natural sign-off calls for a brief explanation—such as being busy, needing to keep moving, or having other callers waiting—you may explain that in your own words, but do not use a fixed script or force that idea into every call. Use only brief natural pauses between the title, artist, queue fact, explanation if any, and goodbye; do not leave a long pause between them. Do not say “well,” “just a moment,” “one second,” or any waiting phrase before or between the result facts. After the queue fact, give a complete natural goodbye sentence containing “bye” or “goodbye”; do not reduce the sign-off to a bare “bye.” Keep exactly the same relaxed conversational pace, volume, pitch, and intensity through the goodbye. Do not rush, shout, emphasize the ending, or turn the goodbye into a flourish. Use a plain, non-exclamatory sentence ending; do not add an exclamation point or exclamatory intonation. Do not ask another question.';
+    finalInstruction += 'Use only these allowlisted customer-facing facts; never mention or infer any other application fields. Give the result naturally in one compact but complete paragraph. You may add at most one short, understated period-appropriate reaction. If a natural sign-off calls for a brief explanation—such as being busy, needing to keep moving, or having other callers waiting—you may explain that in your own words, but do not use a fixed script or force that idea into every call. Use only brief natural pauses between the title, artist, queue fact, explanation if any, and goodbye; do not leave a long pause between them. Do not say “well,” “just a moment,” “one second,” or any waiting phrase before or between the result facts. After the queue fact, give a complete natural goodbye sentence containing “bye” or “goodbye”; do not reduce the sign-off to a bare “bye.” Keep exactly the same relaxed conversational pace, volume, pitch, and intensity through the goodbye. Do not rush, shout, emphasize the ending, or turn the goodbye into a flourish. Use a plain, non-exclamatory sentence ending; do not add an exclamation point or exclamatory intonation. Do not ask another question.';
     selectionBackendWorkPending = true;
     armFinalResponseShutdown();
     announce(finalInstruction);
