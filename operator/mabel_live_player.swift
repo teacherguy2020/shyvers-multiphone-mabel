@@ -11,11 +11,12 @@ let requestedPrebufferMs: Int = {
     guard let flagIndex = commandArguments.firstIndex(of: "--prebuffer-ms"), flagIndex + 1 < commandArguments.count else { return 1500 }
     return max(100, Int(commandArguments[flagIndex + 1]) ?? 1500)
 }()
-let startupPrebufferBytes = max(readSize, Int(sampleRate) * bytesPerFrame * requestedPrebufferMs / 1000)
-let maximumPrebufferBytes = readSize * 50 // 5.0 seconds adaptive ceiling
+let maximumPrebufferBytes = readSize * 5 // 500 ms hard recovery/startup ceiling for now
+let startupPrebufferBytes = min(maximumPrebufferBytes, max(readSize, Int(sampleRate) * bytesPerFrame * requestedPrebufferMs / 1000))
 let lowWaterBytes = readSize * 3 // 300 ms: rebuffer before an audible underrun
 let ringCapacityBytes = Int(sampleRate) * bytesPerFrame * 20
 let telephoneEQEnabled = commandArguments.contains("--telephone-eq")
+let latencyDiagnosticsEnabled = commandArguments.contains("--latency-diagnostics")
 let masterGainDb: Double = {
     guard let flagIndex = commandArguments.firstIndex(of: "--master-gain-db"), flagIndex + 1 < commandArguments.count else { return 0 }
     return Double(commandArguments[flagIndex + 1]) ?? 0
@@ -135,6 +136,7 @@ final class PCMByteRing {
     private let lock = NSLock()
     private var underflowed = false
     private var lowWaterRequested = false
+    private var lowWaterActive = false
     private(set) var underrunCount = 0
     private(set) var underrunBytes = 0
 
@@ -237,7 +239,12 @@ final class PCMByteRing {
             readIndex = (readIndex + count) % storage.count
             used -= count
             if active && used > 0 && used <= lowWaterBytes {
-                lowWaterRequested = true
+                if !lowWaterActive {
+                    lowWaterRequested = true
+                    lowWaterActive = true
+                }
+            } else if used > lowWaterBytes {
+                lowWaterActive = false
             }
             checkInvariants("FIFO read after")
         }
@@ -275,6 +282,14 @@ let ring = PCMByteRing(capacity: ringCapacityBytes)
 let stateLock = NSLock()
 var playbackActive = false
 var targetPrebufferBytes = startupPrebufferBytes
+var lastUnderrunAt: Date?
+var lastTargetDecayAt = Date()
+let targetStepBytes = readSize // 100 ms per actual underrun/recovery step
+let targetDecayInterval: TimeInterval = 5
+
+func bufferMilliseconds(_ bytes: Int) -> Int {
+    Int((Double(bytes) * 1000.0 / (sampleRate * Double(bytesPerFrame))).rounded())
+}
 
 func isPlaybackActive() -> Bool {
     stateLock.lock()
@@ -289,11 +304,26 @@ func setPlaybackActive(_ active: Bool) {
 }
 
 let engine = AVAudioEngine()
+final class RenderMarker {
+    let lock = NSLock()
+    var firstPcmRendered = false
+}
+let renderMarker = RenderMarker()
 let source = AVAudioSourceNode { _, _, frameCount, audioBufferList -> OSStatus in
     let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
     guard let destination = buffers[0].mData else { return noErr }
     let requestedBytes = Int(frameCount) * bytesPerFrame
-    let handedBytes = ring.read(into: destination, bytes: requestedBytes, active: isPlaybackActive())
+    let active = isPlaybackActive()
+    let handedBytes = ring.read(into: destination, bytes: requestedBytes, active: active)
+    if latencyDiagnosticsEnabled && active && handedBytes > 0 {
+        renderMarker.lock.lock()
+        let shouldLog = !renderMarker.firstPcmRendered
+        renderMarker.firstPcmRendered = true
+        renderMarker.lock.unlock()
+        if shouldLog {
+            playerLog("first PCM rendered epoch=\(Date().timeIntervalSince1970) frames=\(frameCount) bytes=\(handedBytes)")
+        }
+    }
     buffers[0].mDataByteSize = UInt32(requestedBytes)
     let advertisedBytes = Int(buffers[0].mDataByteSize)
     if requestedBytes != Int(frameCount) * bytesPerFrame || advertisedBytes != requestedBytes || handedBytes > requestedBytes {
@@ -396,17 +426,25 @@ while let data = try? FileHandle.standardInput.read(upToCount: readSize), !data.
     if chunk.isEmpty { continue }
     ring.append(chunk)
     if ring.takeLowWaterRequested() {
-        targetPrebufferBytes = min(maximumPrebufferBytes, targetPrebufferBytes + readSize * 2)
-        // Low-water is advisory. Keep playing while data remains available;
-        // stopping here would deliberately inject silence and create the gap
-        // this guard is intended to prevent. A genuine underrun below is the
-        // point at which playback pauses and refills.
-        fputs("FIFO low-water advisory; increasing next rebuffer target to \(targetPrebufferBytes / readSize * 100) ms\n", stderr)
+        let depth = ring.availableBytes
+        fputs("FIFO low-water depth bufferedBytes=\(depth) bufferedMs=\(bufferMilliseconds(depth)) targetMs=\(bufferMilliseconds(targetPrebufferBytes))\n", stderr)
     }
     if ring.takeUnderflowed() {
-        targetPrebufferBytes = min(maximumPrebufferBytes, targetPrebufferBytes + readSize * 2)
+        let depth = ring.availableBytes
+        targetPrebufferBytes = min(maximumPrebufferBytes, targetPrebufferBytes + targetStepBytes)
+        lastUnderrunAt = Date()
+        lastTargetDecayAt = Date()
         setPlaybackActive(false)
-        fputs("FIFO underrun; increasing prebuffer to \(targetPrebufferBytes / readSize * 100) ms\n", stderr)
+        fputs("FIFO underrun recovery bufferedBytes=\(depth) bufferedMs=\(bufferMilliseconds(depth)) underruns=\(ring.underrunCount) nextTargetMs=\(bufferMilliseconds(targetPrebufferBytes))\n", stderr)
+    }
+    if let lastUnderrunAt,
+       targetPrebufferBytes > startupPrebufferBytes,
+       Date().timeIntervalSince(lastUnderrunAt) >= targetDecayInterval,
+       Date().timeIntervalSince(lastTargetDecayAt) >= targetDecayInterval {
+        targetPrebufferBytes = max(startupPrebufferBytes, targetPrebufferBytes - targetStepBytes)
+        lastTargetDecayAt = Date()
+        let depth = ring.availableBytes
+        fputs("FIFO recovery target decayed bufferedBytes=\(depth) bufferedMs=\(bufferMilliseconds(depth)) targetMs=\(bufferMilliseconds(targetPrebufferBytes))\n", stderr)
     }
     if !isPlaybackActive() && ring.availableBytes >= targetPrebufferBytes {
         setPlaybackActive(true)

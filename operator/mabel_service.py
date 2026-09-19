@@ -727,6 +727,10 @@ class MabelHandler(BaseHTTPRequestHandler):
                 session = SESSIONS.get(session_id)
             if session and session.get("duckRequested"):
                 restore_browser_live_volume(self.server, session)
+            # Explicit Live cleanup must also release the physical relay.
+            # This covers stale/missing session records and direct client
+            # termination in addition to process-monitor cleanup.
+            set_multiphone_relay(self.server, False)
             with LOCK:
                 SESSIONS.pop(session_id, None)
                 save_last_call_time(time.time())

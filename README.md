@@ -40,7 +40,11 @@ The original numbered shoe keeps the dime input and jewel output separate:
 The installed relay is physically confirmed active-high: GP16 level 1 turns
 the jewel on and level 0 turns it off. Production firmware initializes GP16
 LOW/OFF and enables the jewel for a valid GP15 dime trigger, then turns it off
-when the Mabel call process ends.
+when the Mabel call process ends. The Mac bridge must have
+`MULTIPHONE_RELAY_TOKEN` set to the Pico's ignored `RELAY_TEST_TOKEN` so its
+explicit Live cleanup and process-monitor fallback can authenticate the relay
+off request. After changing that LaunchAgent environment variable, use
+`launchctl bootout` followed by `launchctl bootstrap` to reload the plist.
 
 ## Wiki
 

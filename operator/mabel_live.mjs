@@ -22,6 +22,19 @@ const requestedPlaybackMode = args.get('playback-mode')
   || (args.has('stream-output') && args.get('stream-output') === 'false' ? 'response' : 'stream');
 const playbackMode = ['stream', 'response'].includes(requestedPlaybackMode) ? requestedPlaybackMode : 'stream';
 const streamOutput = playbackMode === 'stream';
+const lowLatencyExperimental = args.has('experimental-low-latency');
+const latencyDiagnostics = lowLatencyExperimental || args.has('latency-diagnostics');
+function boundedMilliseconds(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(100, Math.floor(parsed)) : fallback;
+}
+const inputQuietMs = boundedMilliseconds(args.get('input-quiet-ms'), lowLatencyExperimental ? 275 : 650);
+const numberAccumulationMs = boundedMilliseconds(args.get('number-accumulation-ms'), lowLatencyExperimental ? 850 : 1100);
+const numberGuardMs = boundedMilliseconds(args.get('number-guard-ms'), lowLatencyExperimental ? 200 : 250);
+const freeConversationQuietMs = boundedMilliseconds(args.get('free-conversation-quiet-ms'), Math.max(inputQuietMs, 900));
+const defaultPrebufferMs = boundedMilliseconds(args.get('prebuffer-ms'), lowLatencyExperimental ? 325 : 1500);
+const confirmationPrebufferMs = boundedMilliseconds(args.get('confirmation-prebuffer-ms'), lowLatencyExperimental ? 325 : 1000);
+const selectionPrebufferMs = boundedMilliseconds(args.get('selection-prebuffer-ms'), lowLatencyExperimental ? 325 : 3500);
 const captureDir = path.resolve(args.get('capture-dir') || process.cwd());
 const requestedCaptureResponse = Number(args.get('capture-response') || 2);
 const captureResponseNumber = Number.isFinite(requestedCaptureResponse) ? Math.max(1, Math.floor(requestedCaptureResponse)) : 2;
@@ -44,6 +57,11 @@ const voicePlaybackSpeed = Math.max(1, Number(args.get('voice-speed') ?? 1.0));
 const parsedVoiceGain = Number(args.get('gain') ?? process.env.MABEL_LIVE_GAIN ?? 1.0);
 const requestedVoiceGain = Number.isFinite(parsedVoiceGain) ? Math.max(0, parsedVoiceGain) : 1.0;
 const cleanPathRequested = args.get('voice-speed') === '1.0' && args.get('gain') === '1.0' && !args.has('master-gain-db');
+const masterGainSource = args.has('master-gain-db')
+  ? 'cli'
+  : process.env.MABEL_MASTER_GAIN_DB !== undefined
+    ? 'environment'
+    : 'client-default';
 const parsedMasterGainDb = Number(args.get('master-gain-db') ?? process.env.MABEL_MASTER_GAIN_DB ?? 0);
 const masterGainDb = Number.isFinite(parsedMasterGainDb) ? parsedMasterGainDb : 0;
 const masterGainLinear = 10 ** (masterGainDb / 20);
@@ -109,6 +127,7 @@ let recorder;
 let player;
 let session;
 let callSession;
+let serviceSessionEnded = false;
 let liveStarted = false;
 let liveStartedAt = null;
 let firstOutputLogged = false;
@@ -124,10 +143,15 @@ let outputQueue = Promise.resolve();
 let playbackGeneration = 0;
 let currentPlayback = null;
 let streamWriter = null;
-let streamPrebufferMs = 1500;
+let streamPrebufferMs = defaultPrebufferMs;
 let voiceOutputReady = true;
 let preRingbackPcm = [];
 let preRingbackBytes = 0;
+let callerAudioActive = false;
+let callerAudioEndedAt = null;
+let lastInputTranscriptFinalizedAt = null;
+let latencyTurnId = 0;
+let activeLatencyTurn = null;
 let livePcmBytesReceived = 0;
 let outputAudioBytes = 0;
 let outputAudioDeltas = 0;
@@ -145,6 +169,10 @@ let maxLiveAudioGapMs = 0;
 let lastOutputDiagnosticAt = 0;
 let transcript = '';
 let transcriptTimer;
+let inputTranscriptFirstDeltaAt = null;
+let inputTranscriptLastDeltaAt = null;
+let inputTranscriptDeltaCount = 0;
+let inputTranscriptActivityEndAt = null;
 let confirmationRetryTimer;
 let confirmationRetryFallbackTimer;
 let confirmationResponsePending = false;
@@ -158,6 +186,7 @@ let pendingNumber = null;
 let pendingNumberPhrase = '';
 let awaitingConfirmation = false;
 let selectionInProgress = false;
+let selectionBackendWorkPending = false;
 let offScript = false;
 let offScriptActionInProgress = false;
 let turns = 0;
@@ -244,7 +273,7 @@ function log(message, details = {}) {
 function playEffect(name, requestedDurationSec = null) {
   const file = path.join(soundsDir, soundFiles[name]);
   if (!existsSync(file)) { log('sound effect missing', { name, file }); return Promise.resolve(); }
-  const volume = name === 'ringback' ? '0.08125' : name === 'footsteps' ? '0.175' : '0.375';
+  const volume = name === 'ringback' ? '0.08125' : name === 'footsteps' ? '0.0875' : '0.375';
   return new Promise((resolve) => {
     let playback;
     try {
@@ -323,7 +352,26 @@ async function post(endpoint, body) {
   if (!response.ok) throw new Error(result.error || `Mabel service HTTP ${response.status}`);
   return result;
 }
+async function endServiceSession() {
+  if (serviceSessionEnded || !callSession?.sessionId) return;
+  serviceSessionEnded = true;
+  try {
+    await post('/shyvers/end', { sessionId: callSession.sessionId });
+    log('Mabel service session ended', { sessionId: callSession.sessionId });
+  } catch (error) {
+    log('Mabel service session end error', { error: error.message });
+  }
+}
 function digits(number) { return String(number).split('').join('-'); }
+const spokenNumberWords = new Set(['zero', 'oh', 'naught', 'one', 'two', 'tree', 'free', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'and']);
+const numberContextWords = new Set(['number', 'record', 'the', 'please', 'i', 'want', 'would', 'like', 'give', 'me', 'get', 'that', 'what', 'did', 'say', 'said', 'mm', 'hmm', 'um', 'uh', 'how', 'about', 'can', 'you']);
+function isPotentialRecordNumberPhrase(text) {
+  const tokens = String(text || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  const hasNumberToken = tokens.some((token) => spokenNumberWords.has(token) || /^\d+$/.test(token));
+  const hasNumberMarker = tokens.some((token) => token === 'number' || token === 'record');
+  return (hasNumberToken || hasNumberMarker) && tokens.every((token) => spokenNumberWords.has(token) || numberContextWords.has(token) || /^\d+$/.test(token));
+}
 function numberFromText(text) {
   const value = String(text || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ');
   const digit = value.match(/\b\d+\b/);
@@ -380,8 +428,62 @@ function numberFromText(text) {
   }
   return null;
 }
+function normalizedTranscriptTokens(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').replace(/-/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
+function spokenNumberStatus(text) {
+  const tokens = normalizedTranscriptTokens(text);
+  const numericWords = tokens.filter((token) => spokenNumberWords.has(token) || /^\d+$/.test(token));
+  const hasNumberMarker = tokens.some((token) => token === 'number' || token === 'record');
+  if ((!numericWords.length && !hasNumberMarker) || !isPotentialRecordNumberPhrase(text)) {
+    return { potential: false, complete: false, number: null };
+  }
+  if (!numericWords.length) return { potential: true, complete: false, number: null };
+  const number = numberFromText(text);
+  if (number === null) return { potential: true, complete: false, number: null };
+  const words = numericWords.filter((token) => token !== 'and');
+  const digitForm = words.some((token) => /^\d+$/.test(token));
+  const ambiguousUnitPrefix = words.length === 1 && ['one', 'two', 'three', 'tree', 'free', 'four', 'five', 'six', 'seven', 'eight', 'nine'].includes(words[0]);
+  const incompleteHundred = words.at(-1) === 'hundred';
+  return {
+    potential: true,
+    complete: digitForm || (!ambiguousUnitPrefix && !incompleteHundred),
+    number,
+  };
+}
 function affirmative(text) { return /\b(yes|yeah|yep|yup|uh[- ]?huh|right|exactly|that'?s (right|the one|it|correct)|that is (right|the one|it|correct)|you got it|sure|correct)\b/i.test(text); }
 function negative(text) { return /\b(no|nope|wrong|not that|wait|hold on|sorry)\b/i.test(text); }
+function confirmationStatus(text) {
+  const clean = String(text || '').trim().replace(/[.!?]+$/, '');
+  if (!clean) return null;
+  if (/\b(?:that|that's|that is|yes i|yeah i|yep i|correct i|yes that's|yeah that's|yep that's)$/i.test(clean)) return 'incomplete';
+  if (negative(clean)) return 'rejection';
+  if (affirmative(clean)) return 'confirmation';
+  return null;
+}
+function transcriptFinalizationState() {
+  if (selectionInProgress) return 'selection-in-progress';
+  if (awaitingConfirmation && pendingNumber !== null) return 'awaiting-confirmation';
+  return 'awaiting-record-number';
+}
+function transcriptFinalizationPlan(text) {
+  const clean = String(text || '').trim();
+  const numberStatus = spokenNumberStatus(clean);
+  if (awaitingConfirmation && pendingNumber !== null) {
+    if (numberStatus.complete && numberStatus.number !== null) {
+      return { reason: 'valid-number', guardMs: numberGuardMs };
+    }
+    const confirmation = confirmationStatus(clean);
+    if (confirmation === 'confirmation') return { reason: 'confirmation', guardMs: numberGuardMs };
+    if (confirmation === 'rejection') return { reason: 'rejection', guardMs: numberGuardMs };
+    return { reason: 'timeout', guardMs: numberAccumulationMs };
+  }
+  if (numberStatus.complete && numberStatus.number !== null) {
+    return { reason: 'valid-number', guardMs: numberGuardMs };
+  }
+  if (numberStatus.potential) return { reason: 'timeout', guardMs: numberAccumulationMs };
+  return { reason: 'live-turn-end', guardMs: freeConversationQuietMs };
+}
 function callerRequestedTermination(text) {
   return /\b(?:goodbye|bye(?:\s+now)?|hang\s+up|terminate|end\s+(?:the\s+)?call|you\s+can\s+(?:hang\s+up|terminate))\b/i.test(String(text || ''));
 }
@@ -474,7 +576,7 @@ function requestConfirmation(number, phrase = pendingNumberPhrase) {
   confirmationRetryFallbackTimer = null;
   resetStreamPlayer('new confirmation; discard queued prior response audio');
   lastLiveAudioDeltaAt = null;
-  streamPrebufferMs = 1000;
+  streamPrebufferMs = confirmationPrebufferMs;
   confirmationResponsePending = true;
   confirmationResponseAudioStarted = false;
   const spokenPhrase = String(phrase || confirmationDigits(number)).trim();
@@ -485,6 +587,14 @@ function requestConfirmation(number, phrase = pendingNumberPhrase) {
 }
 function announce(content) {
   if (ws?.readyState !== WebSocket.OPEN || closing) return;
+  const sentAt = Date.now();
+  if (latencyDiagnostics) {
+    if (activeLatencyTurn) activeLatencyTurn.commentarySentAt = sentAt;
+    log('commentary instruction sent', {
+      latencyTurnId: activeLatencyTurn?.id ?? null,
+      contentLength: String(content || '').length,
+    });
+  }
   ws.send(JSON.stringify({ type: 'session.commentary.append', event_id: `mabel_${Date.now()}`, delegation_id: null, content }));
 }
 function pcmRms(chunk) {
@@ -573,6 +683,7 @@ function resampleVoicePcm(pcm) {
 // Future AEC/DSP insertion point. This v1 performs policy gating only.
 function processInputAudio(chunk) {
   const rms = pcmRms(chunk);
+  const now = Date.now();
   inputFrames += 1;
   inputBytes += chunk.length;
   inputPeakRms = Math.max(inputPeakRms, rms);
@@ -582,13 +693,23 @@ function processInputAudio(chunk) {
     inputPeakRms = 0;
   }
   if (rms >= 0.018) {
-    lastInputActivityAt = Date.now();
+    lastInputActivityAt = now;
+    callerAudioActive = true;
     if (outputPlaying) {
       overlapMs += chunk.length / 2 / 24000 * 1000;
       if (verboseDiagnostics && Date.now() - lastAcousticDiagnosticAt >= 1000) {
         log('acoustic activity while output is playing', { duplex, rms: Number(rms.toFixed(4)), bytes: chunk.length });
         lastAcousticDiagnosticAt = Date.now();
       }
+    }
+  } else if (callerAudioActive && now - lastInputActivityAt >= 100) {
+    callerAudioActive = false;
+    callerAudioEndedAt = lastInputActivityAt;
+    if (latencyDiagnostics) {
+      log('caller audio activity ended', {
+        activityEndAt: callerAudioEndedAt,
+        silenceObservedMs: now - callerAudioEndedAt,
+      });
     }
   }
   if (duplex === 'half' && outputPlaying) { inputSuppressedBytes += chunk.length; return null; }
@@ -703,6 +824,7 @@ function ensureNativeStream() {
   if (useNativePlayer) {
     const playerArgs = [];
     playerArgs.push('--prebuffer-ms', String(streamPrebufferMs));
+    if (latencyDiagnostics) playerArgs.push('--latency-diagnostics');
     if (telephoneEq) playerArgs.push('--telephone-eq');
     if (masterGainDb !== 0) playerArgs.push('--master-gain-db', String(masterGainDb));
     if (outputDevice) playerArgs.push('--output-device', outputDevice);
@@ -713,7 +835,16 @@ function ensureNativeStream() {
   player = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 's16le', '-ar', '24000', '-ch_layout', 'mono', '-i', 'pipe:0', '-ar', '48000', '-ch_layout', 'stereo', '-flush_packets', '1', '-f', 'audiotoolbox', ...deviceArgs, 'default'], { stdio: ['pipe', 'ignore', 'pipe'] });
   log('voice player started', { backend: 'ffmpeg-audiotoolbox', output: 'default', deviceIndex: audioDeviceIndex === '' ? 'system default' : Number(audioDeviceIndex), format: 'pcm_s16le stereo 48000 Hz', flushPackets: true });
   }
-  player.stderr.on('data', (chunk) => log('stream playback error', { error: chunk.toString().trim() }));
+  player.stderr.on('data', (chunk) => {
+    const lines = chunk.toString().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    lines.forEach((line) => {
+      if (latencyDiagnostics && line.includes('first PCM rendered')) {
+        log('latency first PCM actually began playback', { latencyTurnId: activeLatencyTurn?.id ?? null, native: line });
+      } else {
+        log('stream playback error', { error: line });
+      }
+    });
+  });
   player.stdin.on('error', (error) => log('stream playback pipe error', { error: error.message }));
   player.once('error', (error) => log('stream player error', { error: error.message }));
   player.once('close', (code, signal) => { if (code !== 0 || signal) log('stream player closed', { code, signal }); player = null; streamWriter = null; });
@@ -722,6 +853,13 @@ function ensureNativeStream() {
 function handoffStreamPcm(pcm) {
   ensureNativeStream();
   setOutputPlaying(true);
+  if (latencyDiagnostics && activeLatencyTurn && !activeLatencyTurn.firstPcmHandoffAt) {
+    activeLatencyTurn.firstPcmHandoffAt = Date.now();
+    log('latency first PCM handed to AVFoundation', {
+      latencyTurnId: activeLatencyTurn.id,
+      fromInstructionMs: activeLatencyTurn.commentarySentAt ? activeLatencyTurn.firstPcmHandoffAt - activeLatencyTurn.commentarySentAt : null,
+    });
+  }
   if (streamWriter?.writable) {
     const frames = pcm.length / 2;
     if (!Number.isInteger(frames) || frames * 2 !== pcm.length) {
@@ -769,7 +907,18 @@ function outputDelta(audio) {
   if (confirmationResponsePending && awaitingConfirmation) {
     confirmationResponseAudioStarted = true;
   }
-  if (!firstOutputLogged) { firstOutputLogged = true; log('first output audio', { latencyMs: liveStartedAt ? Date.now() - liveStartedAt : null }); }
+  const firstDeltaAt = Date.now();
+  if (latencyDiagnostics && activeLatencyTurn && !activeLatencyTurn.firstAudioDeltaAt) {
+    activeLatencyTurn.firstAudioDeltaAt = firstDeltaAt;
+    log('latency first session.output_audio.delta', {
+      latencyTurnId: activeLatencyTurn.id,
+      fromAudioActivityEndMs: activeLatencyTurn.callerAudioEndedAt ? firstDeltaAt - activeLatencyTurn.callerAudioEndedAt : null,
+      fromTranscriptFinalizedMs: activeLatencyTurn.transcriptFinalizedAt ? firstDeltaAt - activeLatencyTurn.transcriptFinalizedAt : null,
+      fromHandlingStartMs: activeLatencyTurn.handlingStartedAt ? firstDeltaAt - activeLatencyTurn.handlingStartedAt : null,
+      fromInstructionMs: activeLatencyTurn.commentarySentAt ? firstDeltaAt - activeLatencyTurn.commentarySentAt : null,
+    });
+  }
+  if (!firstOutputLogged) { firstOutputLogged = true; log('first output audio', { latencyMs: liveStartedAt ? firstDeltaAt - liveStartedAt : null }); }
   const receivedAt = Date.now();
   if (lastLiveAudioDeltaAt !== null) {
     const gapMs = receivedAt - lastLiveAudioDeltaAt;
@@ -860,7 +1009,7 @@ function scheduleFinalResponseClose() {
       const audioDone = finalResponseAudioDoneAt !== null;
       const waitingForMissingAudioDone = !audioDone && sinceGoodbyeMs < missingAudioDoneFallbackMs;
       const waitingForAudioQuiet = audioDone && (currentQuietMs < goodbyeQuietMs || outputPlaying);
-      if (sinceGoodbyeMs < goodbyeTailMs || waitingForMissingAudioDone || waitingForAudioQuiet) {
+      if (sinceGoodbyeMs < goodbyeTailMs || waitingForMissingAudioDone || waitingForAudioQuiet || selectionBackendWorkPending) {
         scheduleFinalResponseClose();
         return;
       }
@@ -908,6 +1057,20 @@ function armFinalResponseShutdown() {
 async function handleTranscript(text) {
   const clean = String(text || '').trim();
   if (!clean || selectionInProgress) return;
+  const handlingStartedAt = Date.now();
+  if (latencyDiagnostics) {
+    activeLatencyTurn = {
+      id: ++latencyTurnId,
+      callerAudioEndedAt,
+      transcriptFinalizedAt: lastInputTranscriptFinalizedAt,
+      handlingStartedAt,
+    };
+    log('deterministic handling begins', {
+      latencyTurnId: activeLatencyTurn.id,
+      audioActivityToTranscriptMs: callerAudioEndedAt && lastInputTranscriptFinalizedAt ? lastInputTranscriptFinalizedAt - callerAudioEndedAt : null,
+      transcriptToHandlingMs: lastInputTranscriptFinalizedAt ? handlingStartedAt - lastInputTranscriptFinalizedAt : null,
+    });
+  }
   turns += 1;
   log('caller utterance complete', { text: clean, outputPlaying, transcriptLatencyMs: Date.now() - lastInputActivityAt });
   if (callerRequestedTermination(clean)) {
@@ -974,26 +1137,66 @@ async function handleTranscript(text) {
   }
 }
 function queueTranscriptDelta(delta) {
+  const receivedAt = Date.now();
+  if (!transcript) {
+    inputTranscriptFirstDeltaAt = receivedAt;
+    inputTranscriptDeltaCount = 0;
+    inputTranscriptActivityEndAt = callerAudioEndedAt;
+    if (latencyDiagnostics) {
+      log('first input transcript delta received', {
+        audioActivityEndAt: inputTranscriptActivityEndAt,
+        fromAudioActivityEndMs: inputTranscriptActivityEndAt ? receivedAt - inputTranscriptActivityEndAt : null,
+      });
+    }
+  }
   transcript += String(delta || '');
+  inputTranscriptLastDeltaAt = receivedAt;
+  inputTranscriptDeltaCount += 1;
   clearTimeout(transcriptTimer);
-  // Live documents input transcript deltas but does not expose a separate
-  // input-transcript.done event. Hold all-number phrases longer so compound
-  // forms such as “one hundred and three” do not finalize as “one” first.
-  const numericWords = new Set(['zero', 'oh', 'naught', 'one', 'two', 'tree', 'free', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'and']);
-  const transcriptTokens = transcript.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').trim().split(/\s+/).filter(Boolean);
-  const numericPhrase = transcriptTokens.length > 0 && transcriptTokens.every((token) => numericWords.has(token) || /^\d+$/.test(token));
-  const quietMs = numericPhrase ? 1100 : 650;
+  const plan = transcriptFinalizationPlan(transcript);
+  const quietMs = plan.guardMs;
   transcriptTimer = setTimeout(() => {
     const complete = transcript;
+    const firstDeltaAt = inputTranscriptFirstDeltaAt;
+    const lastDeltaAt = inputTranscriptLastDeltaAt;
+    const deltaCount = inputTranscriptDeltaCount;
+    const activityEndAt = callerAudioEndedAt || inputTranscriptActivityEndAt;
+    const finalizedAt = Date.now();
+    if (latencyDiagnostics && lastDeltaAt) {
+      log('last input transcript delta received', {
+        text: complete.trim(),
+        deltaCount,
+        receivedAt: lastDeltaAt,
+        audioActivityEndAt: activityEndAt,
+        fromAudioActivityEndMs: activityEndAt ? lastDeltaAt - activityEndAt : null,
+        fromFirstDeltaMs: firstDeltaAt ? lastDeltaAt - firstDeltaAt : null,
+        lastDeltaToFinalizedMs: finalizedAt - lastDeltaAt,
+      });
+    }
     transcript = '';
-    log('input transcript finalized locally', { text: complete.trim(), quietMs });
+    inputTranscriptFirstDeltaAt = null;
+    inputTranscriptLastDeltaAt = null;
+    inputTranscriptDeltaCount = 0;
+    inputTranscriptActivityEndAt = null;
+    lastInputTranscriptFinalizedAt = finalizedAt;
+    log('input transcript finalized locally', {
+      text: complete.trim(),
+      quietMs,
+      state: transcriptFinalizationState(),
+      accumulatedTranscript: complete.trim(),
+      finalizationReason: plan.reason,
+      guardMs: quietMs,
+      audioActivityEndAt: activityEndAt,
+      audioActivityToTranscriptMs: activityEndAt ? lastInputTranscriptFinalizedAt - activityEndAt : null,
+      lastDeltaToFinalizedMs: lastDeltaAt ? lastInputTranscriptFinalizedAt - lastDeltaAt : null,
+    });
     handleTranscript(complete).catch((error) => log('transcript handling error', { error: error.message }));
   }, quietMs);
 }
 async function submitSelection(number) {
   selectionInProgress = true; awaitingConfirmation = false; staleLiveAudioDiscardLogged = false;
   lastLiveAudioDeltaAt = null;
-  streamPrebufferMs = 3500;
+  streamPrebufferMs = selectionPrebufferMs;
   resetStreamPlayer('selection confirmed; discard prior response audio');
   const actionStarted = Date.now();
   try {
@@ -1005,23 +1208,6 @@ async function submitSelection(number) {
     });
     let outcome = result?.result && typeof result.result === 'object' ? result.result : result;
     log('deterministic selection result', { number, actionMs: Date.now() - actionStarted, outcome });
-    voiceGain = heelsVoiceGain;
-    log('voice softened for footsteps', { gain: heelsVoiceGain });
-    try {
-      await playEffect('footsteps');
-    } finally {
-      voiceGain = requestedVoiceGain;
-      log('voice restored after footsteps');
-    }
-    if (outcome.playbackDeferred && Number.isInteger(Number(outcome.mpdSongId))) {
-      const started = await post('/shyvers/start-song', {
-        sessionId: callSession.sessionId,
-        songId: Number(outcome.mpdSongId),
-      });
-      if (!started?.ok) throw new Error(started?.error || 'Now Playing did not start the deferred record');
-      outcome = { ...outcome, playbackDeferred: false, playbackStarted: Boolean(started.playbackStarted ?? started.ok) };
-      log('deferred playback started after footsteps', { number, songId: Number(outcome.mpdSongId), started });
-    }
     const trackName = [outcome.title, outcome.artist].filter((value) => String(value || '').trim()).join(' by ');
     let finalInstruction = `The caller confirmed Multiphone number ${number}. The application completed that exact request. ${trackName ? `Say exactly the supplied song title and artist: “${trackName}”. ` : ''}`;
     if (outcome.queuedBehindJukebox) {
@@ -1036,9 +1222,31 @@ async function submitSelection(number) {
       finalInstruction += `Briefly summarize the supplied application result using only these facts: ${JSON.stringify(outcome)}. `;
     }
     finalInstruction += 'Give the result naturally in one compact but complete paragraph. Include the supplied title, artist, and queue or playback fact; do not truncate the result just to finish quickly. You may add at most one short, understated period-appropriate reaction. If a natural sign-off calls for a brief explanation—such as being busy, needing to keep moving, or having other callers waiting—you may explain that in your own words, but do not use a fixed script or force that idea into every call. Use only brief natural pauses between the title, artist, queue fact, explanation if any, and goodbye; do not leave a long pause between them. Do not say “well,” “just a moment,” “one second,” or any waiting phrase before or between the result facts. After the queue fact, give a complete natural goodbye sentence containing “bye” or “goodbye”; do not reduce the sign-off to a bare “bye.” Keep exactly the same relaxed conversational pace, volume, pitch, and intensity through the goodbye. Do not rush, shout, emphasize the ending, or turn the goodbye into a flourish. Use a plain, non-exclamatory sentence ending; do not add an exclamation point or exclamatory intonation. Do not ask another question.';
+    selectionBackendWorkPending = true;
     armFinalResponseShutdown();
     announce(finalInstruction);
+    const footstepsPromise = (async () => {
+      await playEffect('footsteps');
+    })();
+    const deferredPlaybackPromise = outcome.playbackDeferred && Number.isInteger(Number(outcome.mpdSongId))
+      ? post('/shyvers/start-song', {
+        sessionId: callSession.sessionId,
+        songId: Number(outcome.mpdSongId),
+      }).then((started) => {
+        if (!started?.ok) throw new Error(started?.error || 'Now Playing did not start the deferred record');
+        const updatedOutcome = { ...outcome, playbackDeferred: false, playbackStarted: Boolean(started.playbackStarted ?? started.ok) };
+        log('deferred playback established concurrently', { number, songId: Number(outcome.mpdSongId), started });
+        return updatedOutcome;
+      })
+      : Promise.resolve(outcome);
+    try {
+      outcome = await Promise.all([footstepsPromise, deferredPlaybackPromise]).then(([, updatedOutcome]) => updatedOutcome);
+    } finally {
+      selectionBackendWorkPending = false;
+      if (finalResponsePending && finalResponseSawGoodbye && !closing) scheduleFinalResponseClose();
+    }
   } catch (error) {
+    selectionBackendWorkPending = false;
     log('selection error', { number, error: error.message });
     announce(`The application reported an error: ${error.message}. Apologize briefly, thank the caller, say goodbye, and end the call.`);
     setTimeout(() => stop(1), 5000).unref();
@@ -1072,7 +1280,25 @@ function handleEvent(event) {
     session = event.session;
     liveStarted = true;
     liveStartedAt = Date.now();
-  log('session started', { id: session.id, model: session.model, duplex, playbackMode, cleanPcmPath, voiceSpeed: voicePlaybackSpeed, gain: requestedVoiceGain, masterGainDb, outputDevice, telephoneEq });
+    log('session started', {
+      id: session.id,
+      model: session.model,
+      duplex,
+      playbackMode,
+      cleanPcmPath,
+      voiceSpeed: voicePlaybackSpeed,
+      gain: requestedVoiceGain,
+      masterGainDb,
+      masterGainSource,
+      outputDevice,
+      telephoneEq,
+      lowLatencyExperimental,
+      inputQuietMs,
+      numberAccumulationMs,
+      numberGuardMs,
+      freeConversationQuietMs,
+      prebufferMs: streamPrebufferMs,
+    });
     announce('Begin now. Say exactly one brief greeting: “Multiphone! Mabel here—hello to Clem’s Place. What number, please?” Then listen.');
   } else if (event.type === 'session.output_audio.delta') outputDelta(event.delta);
   else if (event.type === 'session.output_audio.done' || event.type === 'response.output_audio.done' || event.type === 'response.audio.done') {
@@ -1176,7 +1402,8 @@ function cleanup() {
   if (ws && ws.readyState < WebSocket.CLOSING) ws.close();
   const pendingPlayback = outputQueue;
   const pendingStreamDrain = drainStreamPlayer();
-  cleanupPromise = Promise.all([pendingPlayback, pendingStreamDrain])
+  const pendingServiceCleanup = endServiceSession();
+  cleanupPromise = Promise.all([pendingPlayback, pendingStreamDrain, pendingServiceCleanup])
     .catch((error) => log('playback drain error', { error: error.message }))
     .then(() => playEffect('hangup'));
   return cleanupPromise;

@@ -61,7 +61,7 @@ MPD access.
 | `POST /shyvers/start` | Launch the legacy iPad-Shortcut off-script Realtime process. |
 | `POST /shyvers/start-normal` | Launch the normal GPT-Live process with replacement semantics. |
 | `POST /shyvers/speak` | Speak a bridge-generated message through fallback TTS. |
-| `POST /shyvers/end` | Release a session. |
+| `POST /shyvers/end` | Release a session and turn off the physical Multiphone jewel relay. |
 | `GET /health` | Bridge health check. |
 
 The bridge validates the numbered range again even when the caller-side client
@@ -69,6 +69,39 @@ has already validated it. The current valid range is **1 through 170**. The
 bridge retrieves protected Now Playing credentials from macOS Keychain. It also
 has a `curl` retry path for transient launchd/network-route failures and avoids
 redundant playback-start requests when Now Playing already reports playback.
+
+The bridge controls the Pico jewel through `MULTIPHONE_PICO_URL` and the
+`MULTIPHONE_RELAY_TOKEN` environment variable. The token must match the Pico's
+ignored `RELAY_TEST_TOKEN` value; never commit or print it. The normal
+LaunchAgent should include it in its `EnvironmentVariables` dictionary:
+
+```xml
+<key>MULTIPHONE_RELAY_TOKEN</key>
+<string>the-local-pico-relay-token</string>
+```
+
+After changing a LaunchAgent environment variable, reload the job so launchd
+reads the updated plist:
+
+```sh
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.brianwis.mabel-service.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.brianwis.mabel-service.plist
+```
+
+Verify the bridge and relay without exposing the token:
+
+```sh
+curl http://127.0.0.1:8788/health
+curl -X POST http://127.0.0.1:8788/shyvers/end \
+  -H 'Content-Type: application/json' -d '{}'
+curl http://10.0.0.47/relay/status
+```
+
+The final response should report `"interpretedState": "OFF"`. The Live client
+also calls `/shyvers/end` during its own cleanup, while the bridge's child
+process monitor remains a secondary relay-off safeguard. If the jewel is stuck
+on during recovery, rebooting the Pico safely initializes GP16 to its verified
+OFF level.
 
 The bridge persists the completion time of the last call in the user's local
 Mabel state file. If a new call begins within five minutes, the active client
