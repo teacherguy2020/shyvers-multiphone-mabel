@@ -1,0 +1,80 @@
+{
+  "catalog_rows": 170,
+  "playlist": {
+    "playlist_endpoint": "http://10.0.0.4:3103/integrations/multiphone/playlist",
+    "playlist": "Multiphone Playlist",
+    "mpd_host": "10.0.0.254",
+    "version10_reference": "reference/version10_populated_two_pages.pdf"
+  },
+  "reference_checksums": {
+    "blank_fullsize.pdf": "PASS",
+    "blank_two_pages.pdf": "PASS"
+  },
+  "artwork_integrity": {
+    "fullsize": "PASS",
+    "two_pages": "PASS"
+  },
+  "pdfs": {
+    "fullsize": {
+      "pages": 1,
+      "page_size": "1062 x 432 pts"
+    },
+    "two_pages": {
+      "pages": 2,
+      "page_size": "792 x 612 pts (letter)"
+    }
+  },
+  "selection_numbers": {
+    "fullsize": {
+      "expected": 170,
+      "missing": [],
+      "duplicates": [],
+      "exactly_once": true
+    },
+    "two_pages": {
+      "expected": 170,
+      "missing": [],
+      "duplicates": [],
+      "exactly_once": true
+    }
+  },
+  "layout_validation": {
+    "duplicate_or_missing_catalog_rows": "PASS",
+    "text_overflow": "PASS",
+    "page_bounds_and_clipping": "PASS"
+  },
+  "text_validation": {
+    "fullsize": {
+      "missing_fields": 0,
+      "text_bytes": 26409
+    },
+    "two_pages": {
+      "missing_fields": 0,
+      "text_bytes": 20288
+    }
+  },
+  "rendered_proofs": {
+    "generated_fullsize": [
+      "/Users/brianwis/.openclaw/workspace/Multiphone/song-sheet/proof/generated_fullsize-1.png"
+    ],
+    "generated_two_pages": [
+      "/Users/brianwis/.openclaw/workspace/Multiphone/song-sheet/proof/generated_two_pages-1.png",
+      "/Users/brianwis/.openclaw/workspace/Multiphone/song-sheet/proof/generated_two_pages-2.png"
+    ],
+    "version10_two_pages": [
+      "/Users/brianwis/.openclaw/workspace/Multiphone/song-sheet/proof/version10_two_pages-1.png",
+      "/Users/brianwis/.openclaw/workspace/Multiphone/song-sheet/proof/version10_two_pages-2.png"
+    ]
+  },
+  "visual_comparison": {
+    "status": "REVIEW_REQUIRED",
+    "reference": "/Users/brianwis/.openclaw/workspace/Multiphone/song-sheet/reference/version10_populated_two_pages.pdf",
+    "measured_catalog_geometry": "MATCH_WITHIN_0.01_PT_BBOX_ROUNDING",
+    "known_difference": "Version 10 exposes clipped page-one panel-4 words to PDF text extraction; the generated printable proof intentionally omits those non-printing artifacts and keeps page 1 to panels 1–3.",
+    "note": "Artwork objects are preserved and all catalog text is present. The generated PDF uses a separate deterministic overlay, so its PDF/PNG hashes are not expected to equal Version 10; rendered proof images remain supplied for human visual review."
+  },
+  "sha256": {
+    "fullsize_proof": "a28c0c506505e1d10eeebf6d877e33f0ff59eca1b8a695325f6ea7059f99ddeb",
+    "two_page_proof": "ec0dc8199b9a71a04ce852cb803ba38bad5d811e818a603d7064e5dc3323490b"
+  }
+}
