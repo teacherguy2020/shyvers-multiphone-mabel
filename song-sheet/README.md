@@ -31,6 +31,12 @@ After the source snapshot and catalog already exist, the routine proof build
 including PDF validation and 120-DPI proof rendering. The source-refresh step
 adds the network/SSH time needed to read the live playlist and MPD metadata.
 
+For a Finder-friendly build, double-click `Build Shyvers Insert.command`. It
+resolves the repository path from the launcher location, runs the same
+`tools/build.py` entry point with the active `python3` environment, prints clear
+build/validation errors, and opens `proof/song_sheet_two_pages.pdf` in Preview
+after a successful build. The launcher contains no catalog or generator logic.
+
 `collect_sources.py` performs read-only source capture: it reads the current
 Multiphone playlist through the existing Track Key endpoint, reads MPD tags via
 the existing SSH path, and measures the supplied Version 10 PDF. It does not
